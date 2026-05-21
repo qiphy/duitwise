@@ -103,31 +103,36 @@ class _InteractiveQuestWidgetState extends State<InteractiveQuestWidget> {
         ]
       };
 
-      // Step 3: Trigger the official JSON2Video API rendering job post request pipeline
-      final response = await http.post(
-        Uri.parse('https://api.json2video.com/v2/movies'),
-        headers: {
-          'X-API-Key': _json2videoApiKey,
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode(json2VideoPayload),
-      );
-      
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final Map<String, dynamic> responseData = jsonDecode(response.body);
-        
-        // JSON2Video returns a unique hosted URL where the finished file will live
-        // Note: For complex scenes, you might need to poll their status endpoint until 'success'.
-        final String? finalVideoUrl = responseData['project']?['url'] ?? responseData['url'];
+      // --- Step 3: Trigger the official JSON2Video API rendering job post request pipeline ---
+            final response = await http.post(
+              Uri.parse('https://api.json2video.com/v2/movies'), // Corrected endpoint with 's'
+              headers: {
+                'X-API-Key': _json2videoApiKey,
+                'Content-Type': 'application/json',
+              },
+              body: jsonEncode(json2VideoPayload),
+            );
+            
+            if (response.statusCode == 200 || response.statusCode == 201) {
+              final Map<String, dynamic> responseData = jsonDecode(response.body);
+              
+              // Safely capture the video url string, ignoring any integer project IDs
+              String? finalVideoUrl;
+              
+              if (responseData['project'] != null && responseData['project'] is Map) {
+                finalVideoUrl = responseData['project']['url']?.toString();
+              } else {
+                finalVideoUrl = responseData['url']?.toString();
+              }
 
-        setState(() {
-          _currentQuest = mockQuest;
-          _generatedVideoUrl = finalVideoUrl; 
-          _isLoading = false;
-        });
-      } else {
-        throw Exception('JSON2Video server rejected payload parameters: ${response.body}');
-      }
+              setState(() {
+                _currentQuest = mockQuest;
+                _generatedVideoUrl = finalVideoUrl; 
+                _isLoading = false;
+              });
+            } else {
+              throw Exception('JSON2Video server rejected payload parameters: ${response.body}');
+            }
     } catch (e) {
       setState(() => _isLoading = false);
       if (mounted) {
