@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'supabase_service.dart';
-import 'screens/auth_screen.dart';
-import 'screens/home_screen.dart';
 import 'screens/splash_screen.dart';
 
 void main() async {

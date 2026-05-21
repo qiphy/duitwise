@@ -79,7 +79,7 @@ class WalletModel {
 class QuestModel {
   final String id;
   final String title;
-  final String story;
+  final String story; // 🐯 This is the narrative body text!
   final String choiceA;
   final String choiceB;
   final String outcomeA;
@@ -101,12 +101,26 @@ class QuestModel {
     return QuestModel(
       id: json['id'] ?? '',
       title: json['title'] ?? '',
-      story: json['story'] ?? '',
+      story: json['story'] ?? '', // Maps from your DB column seamlessly
       choiceA: json['choice_a'] ?? '',
       choiceB: json['choice_b'] ?? '',
       outcomeA: json['outcome_a'] ?? '',
       outcomeB: json['outcome_b'] ?? '',
       rewardXp: json['reward_xp'] ?? 0,
     );
+  }
+
+  // 💡 Added toJson() method to easily serialize your model if needed
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'title': title,
+      'story': story,
+      'choice_a': choiceA,
+      'choice_b': choiceB,
+      'outcome_a': outcomeA,
+      'outcome_b': outcomeB,
+      'reward_xp': rewardXp,
+    };
   }
 }

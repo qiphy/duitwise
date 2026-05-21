@@ -7,7 +7,7 @@ import '../models.dart';
 import '../widgets/balance_card.dart';
 import 'quest_screen.dart';
 import 'goals_screen.dart';
-import 'auth_screen.dart'; // Imported to ensure logout forces redirection route
+import 'auth_screen.dart'; 
 
 // --- Local Dashboard Data Composition Wrapper ---
 class DashboardData {
@@ -112,7 +112,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // --- Opens Modal to Assign a Task to a Specific Child Identity Node ---
   void _showAddTaskBottomSheet(String childName, String childId) {
     final TextEditingController taskTitleController = TextEditingController();
     final TextEditingController taskRewardController = TextEditingController();
@@ -175,7 +174,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     if (!formKey.currentState!.validate()) return;
                     
                     try {
-                      await supabaseService.client.from('quests').insert({
+                      await supabaseService.client.from('tasks').insert({
                         'profile_id': childId,
                         'title': taskTitleController.text.trim(),
                         'reward_amount': double.parse(taskRewardController.text.trim()),
@@ -184,6 +183,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
                       if (context.mounted) {
                         Navigator.pop(context);
+                        _refreshData(); // Triggers a reload if parents want dynamic feedback
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(content: Text('Chore assigned to $childName successfully!')),
                         );
@@ -207,7 +207,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // --- Show Name Alteration Input Frame Dialog ---
   void _showChangeUsernameDialog(String currentUsername) {
     final TextEditingController usernameController = TextEditingController(text: currentUsername);
     final formKey = GlobalKey<FormState>();
@@ -288,27 +287,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           builder: (context) => Padding(
             padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Profile Settings 🐯', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 16),
-                ListTile(
-                  leading: const Icon(Icons.edit, color: Color(0xFF8B5CF6)),
-                  title: const Text('Change Username'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _showChangeUsernameDialog(currentUsername);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.notifications),
-                  title: const Text('Mission Reminders'),
-                  onTap: () => Navigator.pop(context),
-                ),
-              ],
-            ),
           ),
         );
         break;
@@ -336,7 +314,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
         final List<Widget> screens = [
           _buildHomeDashboard(snapshot),
-          const QuestScreen(),
           const GoalsScreen(),
         ];
 
@@ -344,7 +321,7 @@ class _HomeScreenState extends State<HomeScreen> {
           backgroundColor: const Color(0xFFF5F6FA),
           body: SafeArea(child: isParent ? screens[0] : screens[_currentIndex]),
           bottomNavigationBar: isParent
-              ? null // 🧠 Hides tracking bars completely to isolate parent administration views
+              ? null 
               : BottomNavigationBar(
                   currentIndex: _currentIndex,
                   selectedItemColor: const Color(0xFF8B5CF6),
@@ -361,7 +338,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
+  Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
     if (snapshot.connectionState == ConnectionState.waiting) {
       return const Center(child: CircularProgressIndicator());
     } else if (snapshot.hasError) {
@@ -396,8 +373,9 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(20.0),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start, // 🧠 Ensures child structures scale properly
+          crossAxisAlignment: CrossAxisAlignment.start, 
           children: [
+            // --- Header Component Section ---
             // --- Header Component Section ---
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -424,40 +402,78 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
                   ],
                 ),
                 
-                PopupMenuButton<String>(
-                  tooltip: 'Profile Menu',
-                  onSelected: (value) => _handleProfileMenuAction(value, profile.username),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  offset: const Offset(0, 56),
-                  child: CircleAvatar(
-                    radius: 30,
-                    backgroundColor: isParent ? Colors.blue[100] : Colors.amber[100],
-                    child: Text(isParent ? '🦉' : '🐯', style: const TextStyle(fontSize: 32)),
-                  ),
-                  itemBuilder: (BuildContext context) => [
-                    //  RESTORED: Available to both Parent and Child profiles universally!
-                    PopupMenuItem<String>(
-                      value: 'settings',
-                      child: Row(
-                        children: [
-                          Icon(Icons.settings_outlined, color: Colors.grey[600], size: 20),
-                          const SizedBox(width: 12),
-                          const Text('Profile Settings', style: TextStyle(fontSize: 14)),
-                        ],
+                // Far Right Action Row
+                Row(
+                  children: [
+                    // 🚨 DEMO TRIGGER BUTTON (Only visible on the Kid's Dashboard)
+                    if (!isParent) ...[
+                      IconButton(
+                        tooltip: 'Launch Demo Mission Event',
+                        icon: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            // Soft pulsing outer radar ring effect
+                            Container(
+                              width: 38,
+                              height: 38,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF8B5CF6).withAlpha(40),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const Icon(
+                              Icons.play_circle_filled_rounded, 
+                              color: Color(0xFF8B5CF6), 
+                              size: 28,
+                            ),
+                          ],
+                        ),
+                        onPressed: () {
+                          // Fire off your video QnA popup context immediately!
+                          showInteractiveQuestPopup(
+                            context,
+                            onQuestCompleted: () {
+                              _refreshData(); // Live updates child balances on card close out
+                            },
+                          );
+                        },
                       ),
-                    ),
-                    const PopupMenuDivider(),
-                    PopupMenuItem<String>(
-                      value: 'logout',
-                      child: Row(
-                        children: const [
-                          Icon(Icons.logout_rounded, color: Colors.redAccent, size: 20),
-                          SizedBox(width: 12),
-                          Text('Logout', style: TextStyle(fontSize: 14, color: Colors.redAccent)),
-                        ],
+                      const SizedBox(width: 8), // Small spacing spacer item
+                    ],
+                    
+                    PopupMenuButton<String>(
+                      onSelected: (value) => _handleProfileMenuAction(value, profile.username),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
                       ),
+                      child: CircleAvatar(
+                        radius: 26, // Slighly downscaled to balance button alignment
+                        backgroundColor: isParent ? Colors.blue[100] : Colors.amber[100],
+                        child: Text(isParent ? '🦉' : '🐯', style: const TextStyle(fontSize: 26)),
+                      ),
+                      itemBuilder: (BuildContext context) => [
+                        PopupMenuItem<String>(
+                          value: 'settings',
+                          child: Row(
+                            children: [
+                              Icon(Icons.settings_outlined, color: Colors.grey[600], size: 20),
+                              const SizedBox(width: 12),
+                              const Text('Profile Settings', style: TextStyle(fontSize: 14)),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuDivider(),
+                        PopupMenuItem<String>(
+                          value: 'logout',
+                          child: Row(
+                            children: const [
+                              Icon(Icons.logout_rounded, color: Colors.redAccent, size: 20),
+                              SizedBox(width: 12),
+                              Text('Logout', style: TextStyle(fontSize: 14, color: Colors.redAccent)),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -465,14 +481,15 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
             ),
             const SizedBox(height: 24),
 
-            // --- 🧠 FIXED VIEW INJECTION GATEWAY ---
-            // Separating parent configurations from child wallet widgets completely avoids layout row collisions!
+            // --- FIXED VIEW INJECTION GATEWAY ---
             if (isParent) ...[
               _buildMockBankLinkCard(), 
               const SizedBox(height: 28),
               _buildLinkedChildrenSection(),
             ] else ...[
               BalanceCard(wallet: wallet),
+              const SizedBox(height: 28),
+              _buildChildTasksSection(profile.id), // Added tasks widget for children
             ],
           ],
         ),
@@ -480,35 +497,138 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
     );
   }
 
+  // --- Child Component: Live Tasks Display Panel ---
+  Widget _buildChildTasksSection(String childId) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Your Current Tasks 🚀',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+        ),
+        const SizedBox(height: 12),
+        FutureBuilder<List<dynamic>>(
+          future: supabaseService.client
+              .from('tasks')
+              .select('id, title, reward_amount, status')
+              .eq('profile_id', childId)
+              .order('id', ascending: false), // Shows newest assigned tasks first
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24.0),
+                  child: CircularProgressIndicator(),
+                ),
+              );
+            }
+
+            final tasksList = snapshot.data ?? [];
+
+            if (tasksList.isEmpty) {
+              return Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Column(
+                  children: const [
+                    Text('🎉', style: TextStyle(fontSize: 36)),
+                    SizedBox(height: 8),
+                    Text(
+                      'All cleaned up!',
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF374151)),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'No tasks assigned right now. Go play outside!',
+                      style: TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            return ListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: tasksList.length,
+              itemBuilder: (context, index) {
+                final task = tasksList[index];
+                final String title = task['title'] ?? 'Secret Mission';
+                final double reward = (task['reward_amount'] ?? 0.0).toDouble();
+                final String status = task['status'] ?? 'assigned';
+
+                return Card(
+                  color: Colors.white,
+                  margin: const EdgeInsets.only(bottom: 10),
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    leading: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF3E8FF),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.assignment_turned_in_rounded, color: Color(0xFF8B5CF6)),
+                    ),
+                    title: Text(
+                      title, 
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF1F2937))
+                    ),
+                    subtitle: Text(
+                      'Reward: RM ${reward.toStringAsFixed(2)}',
+                      style: const TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.w600, fontSize: 13),
+                    ),
+                    trailing: Chip(
+                      backgroundColor: status == 'assigned' ? Colors.blue[50] : Colors.green[50],
+                      label: Text(
+                        status.toUpperCase(),
+                        style: TextStyle(
+                          fontSize: 11, 
+                          fontWeight: FontWeight.bold, 
+                          color: status == 'assigned' ? Colors.blue[700] : Colors.green[700]
+                        ),
+                      ),
+                      side: BorderSide.none,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                  ),
+                );
+              },
+            );
+          },
+        ),
+      ],
+    );
+  }
+
   // --- Parent Component: Localized FPX Direct Debit Link Card (Layout Bounded) ---
   Widget _buildMockBankLinkCard() {
-      return Container(
-        width: double.infinity, // 🧠 Securely forces card element to span screen boundaries cleanly
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: _isBankLinked 
-                ? [const Color(0xFF0F172A), const Color(0xFF1E293B)]
-                : [const Color(0xFFE5E7EB), const Color(0xFFF3F4F6)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(
-            color: _isBankLinked ? Colors.transparent : const Color(0xFFD1D5DB),
-            width: 1.5,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withAlpha(13),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            )
-          ],
+    return Container(
+      width: double.infinity, 
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: _isBankLinked 
+              ? [const Color(0xFF0F172A), const Color(0xFF1E293B)]
+              : [const Color(0xFFE5E7EB), const Color(0xFFF3F4F6)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
-        child: _isBankLinked ? _buildLinkedFPXView() : _buildUnlinkedFPXForm(),
-      );
-    }
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: _isBankLinked ? Colors.transparent : const Color(0xFFD1D5DB),
+          width: 1.5,
+        ),
+      ),
+      child: _isBankLinked ? _buildLinkedFPXView() : _buildUnlinkedFPXForm(),
+    );
+  }
 
   Widget _buildLinkedFPXView() {
     return Column(
@@ -560,12 +680,12 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
     );
   }
 
-Widget _buildUnlinkedFPXForm() {
+  Widget _buildUnlinkedFPXForm() {
     final List<String> malaysianBanks = ['Bank Islam', 'Maybank', 'CIMB Bank', 'Public Bank', 'RHB Bank', 'Hong Leong Bank'];
     
     return Column(
-      mainAxisSize: MainAxisSize.min, // 🧠 Forces column to hug content vertically
-      crossAxisAlignment: CrossAxisAlignment.stretch, // Handshakes the parent width cleanly
+      mainAxisSize: MainAxisSize.min, 
+      crossAxisAlignment: CrossAxisAlignment.stretch, 
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -583,7 +703,7 @@ Widget _buildUnlinkedFPXForm() {
         ),
         const SizedBox(height: 16),
         DropdownButtonFormField<String>(
-          value: _selectedBank,
+          initialValue: _selectedBank,
           decoration: InputDecoration(
             labelText: 'Select Bank Name', 
             filled: true, 
@@ -613,7 +733,6 @@ Widget _buildUnlinkedFPXForm() {
             backgroundColor: const Color(0xFF8B5CF6), 
             padding: const EdgeInsets.symmetric(vertical: 16), 
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            elevation: 0,
           ),
           onPressed: () {
             if (_accountNumberController.text.trim().length < 8) return;
@@ -625,44 +744,7 @@ Widget _buildUnlinkedFPXForm() {
     );
   }
 
-  void _showBankRequiredBottomSheet() {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) => Padding(
-        padding: const EdgeInsets.all(28.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Security Verification 🏦', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            const Text(
-              'To preserve regulatory compliance and protect children from unbacked allowance allocations, DuitWise requires an authenticated funding pool before launching child pairing invites.\n\nConnecting a bank accountwill instantiate a verified ledger to backing child reward tasks instantly.',
-              style: TextStyle(fontSize: 14, color: Color(0xFF4B5563), height: 1.5),
-            ),
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF8B5CF6),
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                ),
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Got It!', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-Widget _buildLinkedChildrenSection() {
+  Widget _buildLinkedChildrenSection() {
     final String? parentId = supabaseService.currentUserId;
 
     return Column(
@@ -674,9 +756,7 @@ Widget _buildLinkedChildrenSection() {
         ),
         const SizedBox(height: 12),
         
-        // 1. Enforce our banking barrier gate condition first
         if (!_isBankLinked) ...[
-          // Empty state view block when bank validation fails
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(32),
@@ -687,22 +767,21 @@ Widget _buildLinkedChildrenSection() {
             child: Column(
               children: const [
                 Text('🔒', style: TextStyle(fontSize: 44)),
-                const SizedBox(height: 12),
+                SizedBox(height: 12),
                 Text(
-                  'Household Pairings Suspended', // 💡 Updated Title
+                  'Household Pairings Suspended', 
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF374151)),
                 ),
-                const SizedBox(height: 4),
+                SizedBox(height: 4),
                 Text(
                   'Your paired child accounts are safely stored but temporarily locked. Reconnect your bank account via FPX above to instantly restore allowance distribution profiles and task management panels.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 13, color: Color(0xFF6B7280), height: 1.4), // 💡 Updated Explanatory Text
+                  style: TextStyle(fontSize: 13, color: Color(0xFF6B7280), height: 1.4), 
                 ),
               ],
             ),
           ),
         ] else ... [
-          // 2. BANK IS ACTIVE: Query Supabase row assets for genuine paired children
           FutureBuilder<List<dynamic>>(
             future: supabaseService.client
                 .from('profiles')
@@ -721,7 +800,6 @@ Widget _buildLinkedChildrenSection() {
 
               final kidsList = snapshot.data ?? [];
 
-              // --- STATE A: REAL EMPTY RECORD STATE ---
               if (kidsList.isEmpty) {
                 return Container(
                   width: double.infinity,
@@ -744,18 +822,11 @@ Widget _buildLinkedChildrenSection() {
                         textAlign: TextAlign.center,
                         style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280), height: 1.4),
                       ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Once they enter it during their registration flow, their profile card will automatically materialize here live!',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 12, color: Color(0xFF9CA3AF), fontStyle: FontStyle.italic),
-                      ),
                     ],
                   ),
                 );
               }
 
-              // --- STATE B: ACTIVE PAIRINGS FOUND RECONCILIATION ---
               return ListView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
@@ -787,13 +858,11 @@ Widget _buildLinkedChildrenSection() {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: isApproved ? const Color(0xFF8B5CF6) : Colors.orange,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          elevation: 0,
                         ),
                         onPressed: () {
                           if (isApproved) {
                             _showAddTaskBottomSheet(kidName, kidId);
                           } else {
-                            // Quick internal approval invocation function loop if clicking a pending child
                             _handleInstantApproval(kidId, kidName);
                           }
                         },
@@ -813,10 +882,8 @@ Widget _buildLinkedChildrenSection() {
     );
   }
 
-  // --- Helper function to handle approvals natively if a child links up ---
   Future<void> _handleInstantApproval(String childId, String childName) async {
     try {
-      // Direct call update to activate child profile rows
       await supabaseService.client
           .from('profiles')
           .update({'is_approved': true})
