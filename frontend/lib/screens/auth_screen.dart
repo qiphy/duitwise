@@ -197,16 +197,32 @@ class _AuthScreenState extends State<AuthScreen> {
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F6FA),
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(28.0),
-            child: currentFormBody,
+          backgroundColor: const Color(0xFFF5F6FA),
+          body: SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(28.0),
+                child: currentFormBody,
+              ),
+            ),
           ),
-        ),
-      ),
-    );
+          // ➡️ ADD THESE TWO LINES HERE:
+          persistentFooterAlignment: AlignmentDirectional.center,
+          persistentFooterButtons: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
+              child: Text(
+                'Disclaimer: DuitWise is an educational simulation tool designed to promote financial literacy among youth. It does not provide real-world financial advice, banking services, or licensed investment management.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.black,
+                  height: 1.4,
+                ),
+              ),
+            ),
+          ],
+        );
   }
 
   // --- UI Form Frameworks ---

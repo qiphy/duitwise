@@ -402,17 +402,73 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                 ),
                 
-                // Far Right Action Row
+                // Far Right Action Row (Holds Gamified Money Plan Segment & Actions)
                 Row(
                   children: [
-                    // 🚨 DEMO TRIGGER BUTTON (Only visible on the Kid's Dashboard)
+                    // --- INLINE COIN PLAN COMPONENT (Only visible on Kid's Dashboard) ---
+                    if (!isParent) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.03),
+                              blurRadius: 6,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // 🟢 SAVE BLOCK (Cast to int for clean whole coin numbers)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF4ADE80), 
+                                borderRadius: BorderRadius.horizontal(left: Radius.circular(10)),
+                              ),
+                              child: Text(
+                                '${wallet.saveBalance.toInt()} 🟡',
+                                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            // 🔵 SPEND BLOCK
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                              color: const Color(0xFF60A5FA), 
+                              child: Text(
+                                '${wallet.spendBalance.toInt()} 🟡',
+                                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            // 🔴 SHARE BLOCK
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                              decoration: const BoxDecoration(
+                                color: Color(0xFFF472B6), 
+                                borderRadius: BorderRadius.horizontal(right: Radius.circular(10)),
+                              ),
+                              child: Text(
+                                '${wallet.shareBalance.toInt()} 🟡',
+                                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8), 
+                    ],
+
+                    // 🚨 DEMO TRIGGER BUTTON (Video Quest Launch)
                     if (!isParent) ...[
                       IconButton(
                         tooltip: 'Launch Demo Mission Event',
                         icon: Stack(
                           alignment: Alignment.center,
                           children: [
-                            // Soft pulsing outer radar ring effect
                             Container(
                               width: 38,
                               height: 38,
@@ -429,16 +485,15 @@ class _HomeScreenState extends State<HomeScreen> {
                           ],
                         ),
                         onPressed: () {
-                          // Fire off your video QnA popup context immediately!
                           showInteractiveQuestPopup(
                             context,
                             onQuestCompleted: () {
-                              _refreshData(); // Live updates child balances on card close out
+                              _refreshData(); 
                             },
                           );
                         },
                       ),
-                      const SizedBox(width: 8), // Small spacing spacer item
+                      const SizedBox(width: 4), 
                     ],
                     
                     PopupMenuButton<String>(
@@ -447,7 +502,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: CircleAvatar(
-                        radius: 26, // Slighly downscaled to balance button alignment
+                        radius: 26, 
                         backgroundColor: isParent ? Colors.blue[100] : Colors.amber[100],
                         child: Text(isParent ? '🦉' : '🐯', style: const TextStyle(fontSize: 26)),
                       ),
@@ -477,8 +532,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ],
                 ),
-              ],
-            ),
             const SizedBox(height: 24),
 
             // --- FIXED VIEW INJECTION GATEWAY ---
@@ -493,6 +546,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ],
         ),
+          ],
+      ),
       ),
     );
   }
