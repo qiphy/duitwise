@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:async'; // Added for Timer polling
+import 'package:video_player/video_player.dart';
 
 import '../supabase_service.dart';
 import '../models.dart';
 
-/// Global builder function to cleanly execute the interactive demo mission 
-/// overlay framework from any action trigger point inside the application.
 void showInteractiveQuestPopup(BuildContext context, {VoidCallback? onQuestCompleted}) {
   showModalBottomSheet(
     context: context,
@@ -22,7 +22,6 @@ void showInteractiveQuestPopup(BuildContext context, {VoidCallback? onQuestCompl
 
 class InteractiveQuestWidget extends StatefulWidget {
   final VoidCallback? onCompleted;
-  
   const InteractiveQuestWidget({Key? key, this.onCompleted}) : super(key: key);
 
   @override
@@ -32,11 +31,14 @@ class InteractiveQuestWidget extends StatefulWidget {
 class _InteractiveQuestWidgetState extends State<InteractiveQuestWidget> {
   QuestModel? _currentQuest;
   bool _isLoading = true;
-  int _currentStep = 0; // 0: Video Playback Stage, 1: Q&A Evaluation Stage
-  String? _generatedVideoUrl;
+  int _currentStep = 0; // 0: Video Playback, 1: Quiz Evaluation
+  
+  VideoPlayerController? _videoController;
+  String _loadingStatusText = "Initializing Mission Template...";
+  Timer? _pollingTimer; // Tracks active status checks
 
-  // 🔑 REPLACE THIS WITH YOUR ACTUAL JSON2VIDEO API KEY FOR YOUR DEMO
-  final String _json2videoApiKey = "C3rggdtbnRNUJdBW3WyGc53WBHjKOXQ5freb8Bi5";
+  // 🔴 REPLACE WITH YOUR SECURE SECRETS / CONFIG ENVIRONMENT
+  final String _magicHourApiKey = "mhk_live_qC8ClVBf5EJXZqM76GGl6tk52ntBIRKE5FFelpfHb4EgTL0sm1Wd5J7UusxGJOXGpSCf5eFxnf4qwtWe"; 
 
   @override
   void initState() {
@@ -44,13 +46,20 @@ class _InteractiveQuestWidgetState extends State<InteractiveQuestWidget> {
     _generateDynamicQuestAndVideo();
   }
 
-  /// 🎬 This is the core interface method that talks DIRECTLY to JSON2Video API
+  @override
+  void dispose() {
+    _pollingTimer?.cancel();
+    _videoController?.dispose();
+    super.dispose();
+  }
+
   Future<void> _generateDynamicQuestAndVideo() async {
     try {
-      setState(() => _isLoading = true);
+      setState(() {
+        _isLoading = true;
+        _loadingStatusText = "Drafting Financial Mission... 📝";
+      });
       
-      // Step 1: Create local placeholder quest details to build your financial question module
-      // In a full build, this text can be randomly generated or pulled from your DB.
       final mockQuest = QuestModel(
         id: "demo-quest-id",
         title: "Harimau's Ice Cream Dilemma! 🍦",
@@ -62,86 +71,123 @@ class _InteractiveQuestWidgetState extends State<InteractiveQuestWidget> {
         rewardXp: 20,
       );
 
-      // Step 2: Build the exact JSON body payload that JSON2Video requires to render an on-demand video clip
-      final Map<String, dynamic> json2VideoPayload = {
-        "comment": "Dynamic DuitWise Financial Education Mission Overlay Video clip asset",
-        "width": 1080,
-        "height": 1920, // Crisp vertical video aspect ratio matching modern mobile formats
-        "fps": 30,
-        "scenes": [
-          {
-            "duration": 5, // Video will play for 5 seconds
-            "elements": [
-              {
-                "type": "image",
-                "src": "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?q=80&w=600",
-                "width": 1080,
-                "height": 1920,
-                "cache": true
-              },
-              {
-                "type": "text",
-                "text": mockQuest.title, // Injects your dynamic text straight into the video overlay template!
-                "style": "bold",
-                "font": "Arial",
-                "size": 64,
-                "color": "#FFFFFF",
-                "position": "center",
-                "y": 400
-              },
-              {
-                "type": "text",
-                "text": "Help Harimau make a smart choice!",
-                "font": "Arial",
-                "size": 42,
-                "color": "#FBBF24", // Warm amber color
-                "position": "center",
-                "y": 600
-              }
-            ]
+      setState(() {
+        _loadingStatusText = "Firin' up Magic Hour Engine... 🤖";
+      });
+
+      // 🎬 STEP 1: Post request to Magic Hour Text-to-Video API
+      final response = await http.post(
+        Uri.parse('https://api.magichour.ai/v1/text-to-video'),
+        headers: {
+          'Authorization': 'Bearer $_magicHourApiKey',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          "name": "Harimau Ice Cream Video",
+          "end_seconds": 4,  
+          "aspect_ratio": "1:1", // Valid entries: "16:9", "9:16", "1:1"
+          "resolution": "480p",  // Defaults to 480p on free tier/720p on paid tiers
+          "style": {
+            "prompt": "Cute 3D claymation style tiger character holding an ice cream cone, vibrant colors, animation loop",
           }
-        ]
-      };
+        }),
+      );
 
-      // --- Step 3: Trigger the official JSON2Video API rendering job post request pipeline ---
-            final response = await http.post(
-              Uri.parse('https://api.json2video.com/v2/movies'), // Corrected endpoint with 's'
-              headers: {
-                'X-API-Key': _json2videoApiKey,
-                'Content-Type': 'application/json',
-              },
-              body: jsonEncode(json2VideoPayload),
-            );
-            
-            if (response.statusCode == 200 || response.statusCode == 201) {
-              final Map<String, dynamic> responseData = jsonDecode(response.body);
-              
-              // Safely capture the video url string, ignoring any integer project IDs
-              String? finalVideoUrl;
-              
-              if (responseData['project'] != null && responseData['project'] is Map) {
-                finalVideoUrl = responseData['project']['url']?.toString();
-              } else {
-                finalVideoUrl = responseData['url']?.toString();
-              }
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        throw Exception("Magic Hour rejected request: ${response.body}");
+      }
 
-              setState(() {
-                _currentQuest = mockQuest;
-                _generatedVideoUrl = finalVideoUrl; 
-                _isLoading = false;
-              });
-            } else {
-              throw Exception('JSON2Video server rejected payload parameters: ${response.body}');
-            }
+      final responseData = jsonDecode(response.body) as Map<String, dynamic>;
+      final String projectId = responseData['id'] ?? responseData['project_id'];
+
+      // 🔄 STEP 2: Poll status endpoint until completion
+      setState(() {
+        _loadingStatusText = "Rendering AI visual sequences... 🎬";
+      });
+
+      final String finalVideoUrl = await _pollVideoStatus(projectId);
+
+      // 🎥 STEP 3: Handle native initialization on verified asset loop
+      _videoController = VideoPlayerController.networkUrl(Uri.parse(finalVideoUrl));
+      await _videoController!.initialize();
+      await _videoController!.setVolume(0.0); 
+      await _videoController!.setLooping(true);
+      await _videoController!.play(); 
+
+      setState(() {
+        _currentQuest = mockQuest;
+        _isLoading = false; 
+      });
+
     } catch (e) {
       setState(() => _isLoading = false);
       if (mounted) {
-        Navigator.pop(context); // Cleanly closes modal popup to avoid frozen views
+        Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Direct JSON2Video link failure: $e')),
+          SnackBar(content: Text('Mission rendering error: $e')),
         );
       }
     }
+  }
+
+  // Polling helper logic loops gracefully every 4 seconds to limit rate limits
+Future<String> _pollVideoStatus(String projectId) async {
+    final completer = Completer<String>();
+    
+    _pollingTimer = Timer.periodic(const Duration(seconds: 4), (timer) async {
+      try {
+        final statusResponse = await http.get(
+          Uri.parse('https://api.magichour.ai/v1/video-projects/$projectId'),
+          headers: {'Authorization': 'Bearer $_magicHourApiKey'},
+        );
+
+        if (statusResponse.statusCode == 200) {
+          final data = jsonDecode(statusResponse.body) as Map<String, dynamic>;
+          final String status = (data['status'] ?? '').toString();
+
+          if (status == 'complete') {
+            timer.cancel();
+            
+            final downloads = data['downloads'];
+            String? validatedUrl;
+
+            if (downloads is List && downloads.isNotEmpty) {
+              final firstItem = downloads.first;
+              if (firstItem is Map) {
+                // Extracts the actual direct string property inside the list object
+                validatedUrl = (firstItem['url'] ?? firstItem['video'])?.toString();
+              } else {
+                validatedUrl = firstItem.toString();
+              }
+            } else if (downloads is Map) {
+              // ✨ Fixed: Explicitly targets the nested link parameter string key
+              validatedUrl = (downloads['url'] ?? downloads['video'] ?? data['download_url'])?.toString();
+            } else {
+              validatedUrl = data['download_url']?.toString();
+            }
+
+            if (validatedUrl != null && validatedUrl.isNotEmpty && validatedUrl.startsWith('http')) {
+              completer.complete(validatedUrl);
+            } else {
+              completer.completeError("Format extraction failure. Received string content: $downloads");
+            }
+          } else if (status == 'error') {
+            timer.cancel();
+            completer.completeError("Magic Hour backend failed during video processing render.");
+          } else {
+            debugPrint("Magic Hour video processing progress status: $status");
+          }
+        } else {
+          timer.cancel();
+          completer.completeError("Server rejected status check (${statusResponse.statusCode}): ${statusResponse.body}");
+        }
+      } catch (e) {
+        timer.cancel();
+        completer.completeError(e);
+      }
+    });
+
+    return completer.future;
   }
 
   Future<void> _processQuestSelection(bool choseA) async {
@@ -149,6 +195,8 @@ class _InteractiveQuestWidgetState extends State<InteractiveQuestWidget> {
     
     final profileId = supabaseService.currentUserId ?? "c8e3b7a1-d4f9-4b6e-a2c5-7f3e1b8d62a4";
     final outcomeText = choseA ? _currentQuest!.outcomeA : _currentQuest!.outcomeB;
+
+    _videoController?.pause(); 
 
     if (mounted) {
       await showDialog(
@@ -183,7 +231,7 @@ class _InteractiveQuestWidgetState extends State<InteractiveQuestWidget> {
         }),
       );
     } catch (e) {
-      debugPrint('Silent wallet ledger tracking update error capture: $e');
+      debugPrint('Silent balance sync failure fallback logic: $e');
     }
 
     if (mounted) {
@@ -200,22 +248,48 @@ class _InteractiveQuestWidgetState extends State<InteractiveQuestWidget> {
       height: modalHeight,
       padding: const EdgeInsets.all(24.0),
       child: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: Color(0xFF8B5CF6)))
-          : _currentQuest == null
-              ? const Center(child: Text('No active mission asset blocks found.'))
-              : AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 300),
-                  child: _currentStep == 0 
-                      ? _buildVideoPlaybackStage() 
-                      : _buildQuizAssessmentStage(),
-                ),
+          ? _buildGamifiedLoader()
+          : AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              child: _currentStep == 0 
+                  ? _buildVideoPlaybackStage() 
+                  : _buildQuizAssessmentStage(),
+            ),
     );
   }
 
-  // --- STAGE 0: Video Simulation Frame Layout ---
-  Widget _buildVideoPlaybackStage() {
-    final String streamTarget = _generatedVideoUrl ?? 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?q=80&w=600';
+  Widget _buildGamifiedLoader() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        TweenAnimationBuilder<double>(
+          tween: Tween<double>(begin: 0.0, end: 2 * 3.14159),
+          duration: const Duration(seconds: 3),
+          builder: (context, value, child) {
+            return Transform.rotate(angle: value, child: child);
+          },
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: const BoxDecoration(color: Color(0xFFF3E8FF), shape: BoxShape.circle),
+            child: const Text('🎬', style: TextStyle(fontSize: 44)),
+          ),
+        ),
+        const SizedBox(height: 24),
+        Text(
+          _loadingStatusText,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+        ),
+        const SizedBox(height: 12),
+        const SizedBox(
+          width: 100,
+          child: LinearProgressIndicator(color: Color(0xFF8B5CF6), backgroundColor: Color(0xFFF3E8FF)),
+        )
+      ],
+    );
+  }
 
+  Widget _buildVideoPlaybackStage() {
     return Column(
       key: const ValueKey('video_playback_view'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -237,39 +311,60 @@ class _InteractiveQuestWidgetState extends State<InteractiveQuestWidget> {
         Expanded(
           child: Container(
             decoration: BoxDecoration(
-              color: Colors.black87,
+              color: Colors.black,
               borderRadius: BorderRadius.circular(24),
-              image: streamTarget.startsWith('http') && !streamTarget.contains('.mp4')
-                  ? DecorationImage(
-                      image: NetworkImage(streamTarget),
-                      fit: BoxFit.cover,
-                      opacity: 0.35,
-                    )
-                  : null,
             ),
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: Stack(
+                alignment: Alignment.center,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: const BoxDecoration(color: Colors.white24, shape: BoxShape.circle),
-                    child: const Icon(Icons.play_arrow_rounded, size: 56, color: Colors.white),
-                  ),
-                  const SizedBox(height: 16),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Text(
-                      _currentQuest!.title,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                  if (_videoController != null && _videoController!.value.isInitialized)
+                    Positioned.fill(
+                      child: AspectRatio(
+                        aspectRatio: _videoController!.value.aspectRatio,
+                        child: VideoPlayer(_videoController!),
+                      ),
+                    ),
+                  
+                  Positioned(
+                    left: 24,   
+                    right: 24,  
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _currentQuest!.title,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                            shadows: [Shadow(color: Colors.black, blurRadius: 8, offset: Offset(2, 2))]
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          "Help Harimau choose wisely!",
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Color(0xFFA7F3D0),
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                            shadows: [Shadow(color: Colors.black, blurRadius: 6, offset: Offset(1, 1))]
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    decoration: BoxDecoration(color: Colors.purple.withAlpha(100), borderRadius: BorderRadius.circular(8)),
-                    child: const Text('✨ JSON2Video On-Demand Render Active', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
+
+                  Positioned(
+                    bottom: 16,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      decoration: BoxDecoration(color: Colors.teal.withOpacity(0.9), borderRadius: BorderRadius.circular(8)),
+                      child: const Text('✨ Magic Hour Engine Active', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
+                    ),
                   )
                 ],
               ),
@@ -287,7 +382,7 @@ class _InteractiveQuestWidgetState extends State<InteractiveQuestWidget> {
           ),
           onPressed: () => setState(() => _currentStep = 1), 
           child: const Text(
-            'I Finished Watching! ➡️',
+            'I Finished Watching! Answer Quiz ➡️',
             style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
           ),
         ),
@@ -295,7 +390,6 @@ class _InteractiveQuestWidgetState extends State<InteractiveQuestWidget> {
     );
   }
 
-  // --- STAGE 1: Live Interactive Q&A Evaluation Frame Layout ---
   Widget _buildQuizAssessmentStage() {
     return Column(
       key: const ValueKey('quiz_evaluation_view'),

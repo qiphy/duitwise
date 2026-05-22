@@ -10,10 +10,12 @@ dependencies:
     sdk: flutter
   supabase_flutter: ^2.6.0
   http: ^1.2.0
+  video_player: ^2.11.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  
 
 flutter:
   uses-material-design: true
