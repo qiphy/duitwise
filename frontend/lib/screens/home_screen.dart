@@ -404,61 +404,86 @@ class _HomeScreenState extends State<HomeScreen> {
                 // Far Right Action Row (Holds Gamified Money Plan Segment & Actions)
                 Row(
                   children: [
-                    // --- INLINE COIN PLAN COMPONENT (Only visible on Kid's Dashboard) ---
+                    // --- INLINE COIN PLAN COMPONENT WITH LABELS ---
                     if (!isParent) ...[
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.03),
-                              blurRadius: 6,
-                              offset: const Offset(0, 2),
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.end, // Aligns everything neatly to the right edge
+                        children: [
+                          // 🏷️ Legend Row (Matches your screenshot layout)
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text(
+                                'Your Money Plan 🎯',
+                                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+                              ),
+                              const SizedBox(width: 8),
+                              _buildTinyLegendDot(const Color(0xFF4ADE80), 'Save'),
+                              const SizedBox(width: 6),
+                              _buildTinyLegendDot(const Color(0xFF60A5FA), 'Spend'),
+                              const SizedBox(width: 6),
+                              _buildTinyLegendDot(const Color(0xFFF472B6), 'Share'),
+                            ],
+                          ),
+                          const SizedBox(height: 4), // Small gap between text legend and the bar
+                          
+                          // 📊 The Segmented Coin Bar Capsule
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(12),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.03),
+                                  blurRadius: 4,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            // 🟢 SAVE BLOCK
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                              decoration: const BoxDecoration(
-                                color: Color(0xFF4ADE80), 
-                                borderRadius: BorderRadius.horizontal(left: Radius.circular(10)),
-                              ),
-                              child: Text(
-                                '${wallet.saveBalance.toInt()} 🟡',
-                                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                              ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                // 🟢 SAVE BLOCK
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFF4ADE80),
+                                    borderRadius: BorderRadius.horizontal(left: Radius.circular(8)),
+                                  ),
+                                  child: Text(
+                                    '${wallet.saveBalance.toInt()} 🟡',
+                                    style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                                // 🔵 SPEND BLOCK
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  color: const Color(0xFF60A5FA),
+                                  child: Text(
+                                    '${wallet.spendBalance.toInt()} 🟡',
+                                    style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                                // 🔴 SHARE BLOCK
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFFF472B6),
+                                    borderRadius: BorderRadius.horizontal(right: Radius.circular(8)),
+                                  ),
+                                  child: Text(
+                                    '${wallet.shareBalance.toInt()} 🟡',
+                                    style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                              ],
                             ),
-                            // 🔵 SPEND BLOCK
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                              color: const Color(0xFF60A5FA), 
-                              child: Text(
-                                '${wallet.spendBalance.toInt()} 🟡',
-                                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                            // 🔴 SHARE BLOCK
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                              decoration: const BoxDecoration(
-                                color: Color(0xFFF472B6), 
-                                borderRadius: BorderRadius.horizontal(right: Radius.circular(10)),
-                              ),
-                              child: Text(
-                                '${wallet.shareBalance.toInt()} 🟡',
-                                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 8), 
+                      const SizedBox(width: 8), // Spacing boundary before video/profile buttons
                     ],
 
                     // 🚨 DEMO TRIGGER BUTTON (Video Quest Launch)
@@ -955,4 +980,22 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
   }
+
+  Widget _buildTinyLegendDot(Color color, String text) {
+  return Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Container(
+        width: 6,
+        height: 6,
+        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      ),
+      const SizedBox(width: 3),
+      Text(
+        text,
+        style: TextStyle(fontSize: 10, color: Colors.grey[600], fontWeight: FontWeight.w500),
+      ),
+    ],
+  );
+}
 }
