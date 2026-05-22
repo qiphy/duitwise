@@ -418,7 +418,7 @@ class _AuthScreenState extends State<AuthScreen> {
           color: isSelected ? Colors.white : const Color(0xFFE5E7EB),
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: isSelected ? const Color(0xFF8B5CF6) : Colors.transparent, width: 2.5),
-          boxShadow: isSelected ? [BoxShadow(color: Colors.purple.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 4))] : [],
+          boxShadow: isSelected ? [BoxShadow(color: Colors.purple.withValues(alpha: 0.1), blurRadius: 10, offset: const Offset(0, 4))] : [],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

@@ -362,7 +362,7 @@ Future<String> _pollVideoStatus(String projectId) async {
                     bottom: 16,
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                      decoration: BoxDecoration(color: Colors.teal.withOpacity(0.9), borderRadius: BorderRadius.circular(8)),
+                      decoration: BoxDecoration(color: Colors.teal.withValues(alpha: 0.9), borderRadius: BorderRadius.circular(8)),
                       child: const Text('✨ Magic Hour Engine Active', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
                     ),
                   )

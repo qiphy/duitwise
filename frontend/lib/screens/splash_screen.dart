@@ -229,7 +229,7 @@ class _SplashScreenState extends State<SplashScreen>
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.yellow.withOpacity(0.45),
+                              color: Colors.yellow.withValues(alpha: 0.45),
                               blurRadius: 70,
                               spreadRadius: 20,
                             ),
@@ -312,7 +312,7 @@ class _SplashScreenState extends State<SplashScreen>
       width: 55,
       height: 55,
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.25),
+        color: Colors.white.withValues(alpha: 0.25),
         shape: BoxShape.circle,
       ),
       child: Center(
@@ -416,7 +416,7 @@ class _KidsBackgroundPainter extends CustomPainter {
 
   void _drawCloud(Canvas canvas, Offset offset) {
     final cloudPaint = Paint()
-      ..color = Colors.white.withOpacity(0.85);
+      ..color = Colors.white.withValues(alpha: 0.85);
 
     canvas.drawCircle(offset, 24, cloudPaint);
     canvas.drawCircle(offset + const Offset(25, -10), 30, cloudPaint);
@@ -435,7 +435,7 @@ class _SparklePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final sparklePaint = Paint()
-      ..color = Colors.white.withOpacity(0.7);
+      ..color = Colors.white.withValues(alpha: 0.7);
 
     final stars = [
       Offset(size.width * 0.18, size.height * 0.22),
