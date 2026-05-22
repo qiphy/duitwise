@@ -338,7 +338,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
+Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
     if (snapshot.connectionState == ConnectionState.waiting) {
       return const Center(child: CircularProgressIndicator());
     } else if (snapshot.hasError) {
@@ -408,9 +408,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     if (!isParent) ...[
                       Row(
                         mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.center, // Vertically aligns the text with the capsule bar
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          // 🏷️ Legend Row (Now on the left side)
+                          // 🏷️ Legend Row
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -426,7 +426,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               _buildTinyLegendDot(const Color(0xFFF472B6), 'Share'),
                             ],
                           ),
-                          const SizedBox(width: 12), // Horizontal gap between the legend and the bar
+                          const SizedBox(width: 12),
                           
                           // 📊 The Segmented Coin Bar Capsule
                           Container(
@@ -483,7 +483,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ],
                       ),
-                      const SizedBox(width: 8), // Spacing boundary before video/profile buttons
+                      const SizedBox(width: 8), 
                     ],
 
                     // 🚨 DEMO TRIGGER BUTTON (Video Quest Launch)
@@ -556,6 +556,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ],
                 ),
+              ],
+            ),
             const SizedBox(height: 24),
 
             // --- FIXED VIEW INJECTION GATEWAY ---
@@ -570,8 +572,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ],
         ),
-          ],
-      ),
       ),
     );
   }
