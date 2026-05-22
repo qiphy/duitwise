@@ -338,7 +338,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
+  Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
     if (snapshot.connectionState == ConnectionState.waiting) {
       return const Center(child: CircularProgressIndicator());
     } else if (snapshot.hasError) {
@@ -367,236 +367,245 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
     final wallet = snapshot.data!.wallet;
     final bool isParent = profile.role == 'parent';
 
+    // 📐 Screen Width Breakpoint Metrics
+    final double screenWidth = MediaQuery.of(context).size.width;
+    final bool isNarrowScreen = screenWidth < 640; 
+
     return RefreshIndicator(
       onRefresh: () async => _refreshData(),
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(20.0),
+        padding: EdgeInsets.all(isNarrowScreen ? 16.0 : 24.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start, 
           children: [
-            // --- Header Component Section ---
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Hey ${profile.username}! 👋',
-                      style: const TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF1F2937),
+            // --- RESPONSIVE HEADER COMPONENT SECTION ---
+            isNarrowScreen 
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildUserGreeting(profile, isParent),
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          if (!isParent) _buildResponsiveCoinPlan(isNarrowScreen: true, wallet: wallet),
+                          _buildActionButtons(isParent, profile),
+                        ],
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      isParent ? 'Family Controller Panel' : 'Ready to be money smart today?',
-                      style: const TextStyle(
-                        fontSize: 14,
-                        color: Color(0xFF6B7280),
-                      ),
-                    ),
-                  ],
-                ),
-                
-                // Far Right Action Row (Holds Gamified Money Plan Segment & Actions)
-                Row(
-                  children: [
-                    // --- INLINE COIN PLAN COMPONENT WITH LABELS ---
-                    // --- ADAPTIVE COIN PLAN COMPONENT WITH LABELS ---
-                    if (!isParent) ...[
-                      LayoutBuilder(
-                        builder: (context, constraints) {
-                          // Define the threshold for narrow screens
-                          final bool isNarrow = MediaQuery.of(context).size.width < 600;
-
-                          // The core legend widget
-                          final Widget legend = Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Text(
-                                'Your Money Plan 🎯',
-                                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
-                              ),
-                              const SizedBox(width: 8),
-                              _buildTinyLegendDot(const Color(0xFF4ADE80), 'Save'),
-                              const SizedBox(width: 6),
-                              _buildTinyLegendDot(const Color(0xFF60A5FA), 'Spend'),
-                              const SizedBox(width: 6),
-                              _buildTinyLegendDot(const Color(0xFFF472B6), 'Share'),
-                            ],
-                          );
-
-                          // The segmented capsule widget
-                          final Widget coinBar = Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(12),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.03),
-                                  blurRadius: 4,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                // 🟢 SAVE BLOCK
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                  decoration: const BoxDecoration(
-                                    color: Color(0xFF4ADE80),
-                                    borderRadius: BorderRadius.horizontal(left: Radius.circular(8)),
-                                  ),
-                                  child: Text(
-                                    '${wallet.saveBalance.toInt()} 🟡',
-                                    style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                                  ),
-                                ),
-                                // 🔵 SPEND BLOCK
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                  color: const Color(0xFF60A5FA),
-                                  child: Text(
-                                    '${wallet.spendBalance.toInt()} 🟡',
-                                    style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                                  ),
-                                ),
-                                // 🔴 SHARE BLOCK
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                  decoration: const BoxDecoration(
-                                    color: Color(0xFFF472B6),
-                                    borderRadius: BorderRadius.horizontal(right: Radius.circular(8)),
-                                  ),
-                                  child: Text(
-                                    '${wallet.shareBalance.toInt()} 🟡',
-                                    style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-
-                          // If narrow screen, stack them vertically. Otherwise, lay out horizontally.
-                          if (isNarrow) {
-                            return Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.end, // Aligns elements neatly rightward
-                              children: [
-                                legend,
-                                const SizedBox(height: 4),
-                                coinBar,
-                              ],
-                            );
-                          } else {
-                            return Row(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                legend,
-                                const SizedBox(width: 12),
-                                coinBar,
-                              ],
-                            );
-                          }
-                        },
-                      ),
-                      const SizedBox(width: 8), 
                     ],
-
-                    // 🚨 DEMO TRIGGER BUTTON (Video Quest Launch)
-                    if (!isParent) ...[
-                      IconButton(
-                        tooltip: 'Launch Demo Mission Event',
-                        icon: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            Container(
-                              width: 38,
-                              height: 38,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF8B5CF6).withAlpha(40),
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            const Icon(
-                              Icons.play_circle_filled_rounded, 
-                              color: Color(0xFF8B5CF6), 
-                              size: 28,
-                            ),
+                  )
+                : Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(child: _buildUserGreeting(profile, isParent)),
+                      const SizedBox(width: 16),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (!isParent) ...[
+                            _buildResponsiveCoinPlan(isNarrowScreen: false, wallet: wallet),
+                            const SizedBox(width: 12),
                           ],
-                        ),
-                        onPressed: () {
-                          showInteractiveQuestPopup(
-                            context,
-                            onQuestCompleted: () {
-                              _refreshData(); 
-                            },
-                          );
-                        },
+                          _buildActionButtons(isParent, profile),
+                        ],
                       ),
-                      const SizedBox(width: 4), 
                     ],
-                    
-                    PopupMenuButton<String>(
-                      onSelected: (value) => _handleProfileMenuAction(value, profile.username),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: CircleAvatar(
-                        radius: 26, 
-                        backgroundColor: isParent ? Colors.blue[100] : Colors.amber[100],
-                        child: Text(isParent ? '🦉' : '🐯', style: const TextStyle(fontSize: 26)),
-                      ),
-                      itemBuilder: (BuildContext context) => [
-                        PopupMenuItem<String>(
-                          value: 'settings',
-                          child: Row(
-                            children: [
-                              Icon(Icons.settings_outlined, color: Colors.grey[600], size: 20),
-                              const SizedBox(width: 12),
-                              const Text('Profile Settings', style: TextStyle(fontSize: 14)),
-                            ],
-                          ),
-                        ),
-                        const PopupMenuDivider(),
-                        PopupMenuItem<String>(
-                          value: 'logout',
-                          child: Row(
-                            children: const [
-                              Icon(Icons.logout_rounded, color: Colors.redAccent, size: 20),
-                              SizedBox(width: 12),
-                              Text('Logout', style: TextStyle(fontSize: 14, color: Colors.redAccent)),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ],
-            ),
+                  ),
+                  
             const SizedBox(height: 24),
 
             // --- FIXED VIEW INJECTION GATEWAY ---
             if (isParent) ...[
               _buildMockBankLinkCard(), 
-              const SizedBox(height: 28),
+              const SizedBox(height: 24),
               _buildLinkedChildrenSection(),
             ] else ...[
               BalanceCard(wallet: wallet),
-              const SizedBox(height: 28),
+              const SizedBox(height: 24),
               _buildChildTasksSection(profile.id), 
             ],
           ],
         ),
       ),
+    );
+  }
+
+  // 👤 Sub-component: Username Greeting Text
+  Widget _buildUserGreeting(dynamic profile, bool isParent) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'Hey ${profile.username}! 👋',
+          style: const TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF1F2937),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          isParent ? 'Family Controller Panel' : 'Ready to be money smart today?',
+          style: const TextStyle(
+            fontSize: 14,
+            color: Color(0xFF6B7280),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // 📊 Sub-component: Responsive Money Plan Layout
+  Widget _buildResponsiveCoinPlan({required bool isNarrowScreen, required dynamic wallet}) {
+    final Widget legend = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text(
+          'Your Money Plan 🎯',
+          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+        ),
+        const SizedBox(width: 6),
+        _buildTinyLegendDot(const Color(0xFF4ADE80), 'Save'),
+        const SizedBox(width: 4),
+        _buildTinyLegendDot(const Color(0xFF60A5FA), 'Spend'),
+        const SizedBox(width: 4),
+        _buildTinyLegendDot(const Color(0xFFF472B6), 'Share'),
+      ],
+    );
+
+    final Widget coinBar = Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildCapsuleSegment('${wallet.saveBalance.toInt()} 🟡', const Color(0xFF4ADE80), isLeft: true),
+          _buildCapsuleSegment('${wallet.spendBalance.toInt()} 🟡', const Color(0xFF60A5FA)),
+          _buildCapsuleSegment('${wallet.shareBalance.toInt()} 🟡', const Color(0xFFF472B6), isRight: true),
+        ],
+      ),
+    );
+
+    if (isNarrowScreen) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          legend,
+          const SizedBox(height: 6),
+          coinBar,
+        ],
+      );
+    } else {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          legend,
+          const SizedBox(width: 12),
+          coinBar,
+        ],
+      );
+    }
+  }
+
+  // 💊 Sub-component: Segment Builder for the capsule bars
+  Widget _buildCapsuleSegment(String text, Color color, {bool isLeft = false, bool isRight = false}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.only(
+          topLeft: isLeft ? const Radius.circular(8) : Radius.zero,
+          bottomLeft: isLeft ? const Radius.circular(8) : Radius.zero,
+          topRight: isRight ? const Radius.circular(8) : Radius.zero,
+          bottomRight: isRight ? const Radius.circular(8) : Radius.zero,
+        ),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+
+  // 🕹️ Sub-component: Right-aligned Interactive Action Buttons
+  Widget _buildActionButtons(bool isParent, dynamic profile) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (!isParent) ...[
+          IconButton(
+            tooltip: 'Launch Demo Mission Event',
+            icon: Stack(
+              alignment: Alignment.center,
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF8B5CF6).withAlpha(40),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const Icon(Icons.play_circle_filled_rounded, color: Color(0xFF8B5CF6), size: 28),
+              ],
+            ),
+            onPressed: () {
+              showInteractiveQuestPopup(
+                context,
+                onQuestCompleted: () => _refreshData(),
+              );
+            },
+          ),
+          const SizedBox(width: 4),
+        ],
+        PopupMenuButton<String>(
+          onSelected: (value) => _handleProfileMenuAction(value, profile.username),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: CircleAvatar(
+            radius: 24,
+            backgroundColor: isParent ? Colors.blue[100] : Colors.amber[100],
+            child: Text(isParent ? '🦉' : '🐯', style: const TextStyle(fontSize: 22)),
+          ),
+          itemBuilder: (BuildContext context) => [
+            PopupMenuItem<String>(
+              value: 'settings',
+              child: Row(
+                children: [
+                  Icon(Icons.settings_outlined, color: Colors.grey[600], size: 20),
+                  const SizedBox(width: 12),
+                  const Text('Profile Settings', style: TextStyle(fontSize: 14)),
+                ],
+              ),
+            ),
+            const PopupMenuDivider(),
+            PopupMenuItem<String>(
+              value: 'logout',
+              child: Row(
+                children: const [
+                  Icon(Icons.logout_rounded, color: Colors.redAccent, size: 20),
+                  SizedBox(width: 12),
+                  Text('Logout', style: TextStyle(fontSize: 14, color: Colors.redAccent)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
