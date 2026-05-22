@@ -376,7 +376,6 @@ class _HomeScreenState extends State<HomeScreen> {
           crossAxisAlignment: CrossAxisAlignment.start, 
           children: [
             // --- Header Component Section ---
-            // --- Header Component Section ---
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -423,7 +422,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            // 🟢 SAVE BLOCK (Cast to int for clean whole coin numbers)
+                            // 🟢 SAVE BLOCK
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                               decoration: const BoxDecoration(
@@ -532,6 +531,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ],
                 ),
+              ],
+            ),
             const SizedBox(height: 24),
 
             // --- FIXED VIEW INJECTION GATEWAY ---
@@ -542,12 +543,10 @@ class _HomeScreenState extends State<HomeScreen> {
             ] else ...[
               BalanceCard(wallet: wallet),
               const SizedBox(height: 28),
-              _buildChildTasksSection(profile.id), // Added tasks widget for children
+              _buildChildTasksSection(profile.id), 
             ],
           ],
         ),
-          ],
-      ),
       ),
     );
   }
@@ -636,7 +635,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF1F2937))
                     ),
                     subtitle: Text(
-                      'Reward: RM ${reward.toStringAsFixed(2)}',
+                      'Reward: ${reward.toInt()} Coins 🟡',
                       style: const TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.w600, fontSize: 13),
                     ),
                     trailing: Chip(
