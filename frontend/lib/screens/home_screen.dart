@@ -406,11 +406,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     // --- INLINE COIN PLAN COMPONENT WITH LABELS ---
                     if (!isParent) ...[
-                      Column(
+                      Row(
                         mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.end, // Aligns everything neatly to the right edge
+                        crossAxisAlignment: CrossAxisAlignment.center, // Vertically aligns the text with the capsule bar
                         children: [
-                          // 🏷️ Legend Row (Matches your screenshot layout)
+                          // 🏷️ Legend Row (Now on the left side)
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -426,7 +426,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               _buildTinyLegendDot(const Color(0xFFF472B6), 'Share'),
                             ],
                           ),
-                          const SizedBox(height: 4), // Small gap between text legend and the bar
+                          const SizedBox(width: 12), // Horizontal gap between the legend and the bar
                           
                           // 📊 The Segmented Coin Bar Capsule
                           Container(
@@ -556,8 +556,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ],
                 ),
-              ],
-            ),
             const SizedBox(height: 24),
 
             // --- FIXED VIEW INJECTION GATEWAY ---
@@ -572,6 +570,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ],
         ),
+          ],
+      ),
       ),
     );
   }
