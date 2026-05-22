@@ -405,13 +405,15 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
                 Row(
                   children: [
                     // --- INLINE COIN PLAN COMPONENT WITH LABELS ---
+                    // --- ADAPTIVE COIN PLAN COMPONENT WITH LABELS ---
                     if (!isParent) ...[
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          // 🏷️ Legend Row
-                          Row(
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          // Define the threshold for narrow screens
+                          final bool isNarrow = MediaQuery.of(context).size.width < 600;
+
+                          // The core legend widget
+                          final Widget legend = Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               const Text(
@@ -425,11 +427,10 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
                               const SizedBox(width: 6),
                               _buildTinyLegendDot(const Color(0xFFF472B6), 'Share'),
                             ],
-                          ),
-                          const SizedBox(width: 12),
-                          
-                          // 📊 The Segmented Coin Bar Capsule
-                          Container(
+                          );
+
+                          // The segmented capsule widget
+                          final Widget coinBar = Container(
                             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
                             decoration: BoxDecoration(
                               color: Colors.white,
@@ -480,8 +481,31 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
                                 ),
                               ],
                             ),
-                          ),
-                        ],
+                          );
+
+                          // If narrow screen, stack them vertically. Otherwise, lay out horizontally.
+                          if (isNarrow) {
+                            return Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.end, // Aligns elements neatly rightward
+                              children: [
+                                legend,
+                                const SizedBox(height: 4),
+                                coinBar,
+                              ],
+                            );
+                          } else {
+                            return Row(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                legend,
+                                const SizedBox(width: 12),
+                                coinBar,
+                              ],
+                            );
+                          }
+                        },
                       ),
                       const SizedBox(width: 8), 
                     ],
