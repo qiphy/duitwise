@@ -98,28 +98,23 @@ class _InteractiveQuestWidgetState extends State<InteractiveQuestWidget> {
   }
 
 // 🛠️ REPLACE THE ENTIRE OLD _generateDynamicQuestAndVideo FUNCTION WITH THIS:
-  Future<void> _generateDynamicQuestAndVideo() async {
-try {
+Future<void> _generateDynamicQuestAndVideo() async {
+    try {
       setState(() {
         _isLoading = true;
         _loadingStatusText = "Preparing Your Financial Mission... 📝";
       });
 
-      // 🛠️ CLEANED UP: The inline import is gone. This line works perfectly now!
+      // 1. Pick a random quiz asset from your global configuration list
       _selectedVideoIndex = math.Random().nextInt(eduVideosList.length);
       final activeQuizData = eduVideosList[_selectedVideoIndex];
 
       // 2. Map the asset data structures into your operational QuestModel
-      final bool isACorrect = activeQuizData.correctIndex == 0;
-      final bool isBCorrect = activeQuizData.correctIndex == 1;
-
       final localQuest = QuestModel(
         id: "local-asset-quest-$_selectedVideoIndex",
         story: activeQuizData.question,
         choiceA: activeQuizData.options[0],
         choiceB: activeQuizData.options[1],
-        
-        // 🛠️ FIX: Strip the ternary switches. Make A always pass success text, and B always pass failure text.
         outcomeA: "Awesome choice! 🐯 ${activeQuizData.keyLesson}",
         outcomeB: "Not quite! ${activeQuizData.keyLesson}",
         rewardXp: 20,
@@ -127,6 +122,7 @@ try {
 
       final String videoUrlPath = activeQuizData.assetPath;
       
+      // 3. Clean initialization via network URL (Safe for Mobile & Web targets)
       _videoController = VideoPlayerController.networkUrl(
         Uri.parse(videoUrlPath),
       );
@@ -141,31 +137,8 @@ try {
         _isLoading = false;
       });
 
-      // 3. Initialize the native asset controller from the bundled path string
-      final String videoPath = activeQuizData.assetPath;
-      
-      // Check if the app is currently compiling/running on a Web target profile
-      if (identical(0, 0.0)) { 
-        // Flutter Web expects paths to hit the web root folder assets folder explicitly
-        _videoController = VideoPlayerController.networkUrl(
-          Uri.parse('${Uri.base.origin}/$videoPath'),
-        );
-      } else {
-        // Mobile platform profiles read directly from the asset bundles
-        _videoController = VideoPlayerController.asset(videoPath);
-      }
-
-      await _videoController!.initialize();
-      await _videoController!.setVolume(1.0);
-      await _videoController!.setLooping(true);
-      await _videoController!.play();
-
-      setState(() {
-        _currentQuest = localQuest;
-        _isLoading = false;
-      });
-
     } catch (e) {
+      debugPrint('Error loading video path: $e');
       setState(() => _isLoading = false);
       if (mounted) {
         Navigator.pop(context);

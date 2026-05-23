@@ -236,14 +236,13 @@ class _SplashScreenState extends State<SplashScreen>
                           ],
                         ),
                       ),
-
                       // AVATAR
-                      Image.asset(
+                      Image.network(
                         'https://tbrefzeytkflqyadayvs.supabase.co/storage/v1/object/public/app-assets/avatar.png',
                         width: 340,
                         height: 340,
                         fit: BoxFit.contain,
-                      ),
+                      ), // Image.network
                     ],
                   ),
                 ),
