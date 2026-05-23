@@ -17,7 +17,7 @@ app = FastAPI(
 # --- Add CORS Middleware Configuration ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://duitwise.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
