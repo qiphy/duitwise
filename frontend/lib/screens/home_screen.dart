@@ -696,66 +696,102 @@ Future<void> _approveTaskAndDisburseFunds(String taskId, String childId, double 
             );
           }
 
-          // 🗂️ CLEAN MULTI-TAB MATRIX ARRAY mapping down cleanly
+          // 🗂️ TAB CONFIGURATION: Content screens only (Headers have been cleanly abstracted out)
           final List<Widget> screens = [
-            _buildHomeDashboard(snapshot),          // Screen 1: Home
+            _buildHomeDashboard(snapshot),          // Screen 1: Home Dashboard Panel
             const GoalsScreen(),                    // Screen 2: Missions
             const TransactionHistoryScreen(),  
-            const MoneyReportScreen(),     // Screen 3: History (Updated to matching class namespace)
+            const MoneyReportScreen(),              // Screen 3: History Reports
           ];
 
           return Scaffold(
             backgroundColor: const Color(0xFFF5F6FA),
-            // ✅ NEW GLOBAL APPBAR: Standardized header structure across child account tabs
-            appBar: isParent 
-                ? null // Parent Control Panel preserves its dedicated scrollable top view format
-                : PreferredSize(
-                    preferredSize: const Size.fromHeight(80.0),
-                    child: SafeArea(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
-                        color: const Color(0xFFF5F6FA),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          crossAxisAlignment: CrossAxisAlignment.center, 
-                          children: [
-                            Expanded(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Hi, ${profile.username}! 👋',
-                                    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  const Text(
-                                    'Ready to grow your savings?',
-                                    style: TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.w500),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                _buildResponsiveCoinPlan(isNarrowScreen: true, wallet: wallet),
-                                const SizedBox(width: 8),
-                                _buildActionButtons(isParent, profile),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
+            appBar: null, // Left explicitly null to prevent double-header glitches
             body: SafeArea(
               child: RefreshIndicator(
                 color: const Color(0xFF8B5CF6),
                 onRefresh: () async => _refreshData(),
-                child: isParent ? screens[0] : IndexedStack(index: _currentIndex, children: screens),
+                child: isParent 
+                    ? screens[0] // Parent view retains custom internal single-scroll view rules
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // 🌟 STICKY GLOBAL HEADER CARD: Persists across ALL page tracking routes
+                          Padding(
+                            padding: const EdgeInsets.only(top: 24.0, left: 24.0, right: 24.0),
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                bool isNarrow = constraints.maxWidth < 700;
+
+                                if (isNarrow) {
+                                  return Column(
+                                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                                    children: [
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text('Hi, ${profile.username}! 👋', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF1F2937))),
+                                                const SizedBox(height: 4),
+                                                const Text('Ready to master your financial goals today?', style: TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                                              ],
+                                            ),
+                                          ),
+                                          _buildActionButtons(isParent, profile),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 16),
+                                      _buildResponsiveCoinPlan(isNarrowScreen: true, wallet: wallet),
+                                    ],
+                                  );
+                                } else {
+                                  return Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    crossAxisAlignment: CrossAxisAlignment.center,
+                                    children: [
+                                      Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            'Hi, ${profile.username}! 👋', 
+                                            style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          const Text('Ready to master your financial goals today?', style: TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                                        ],
+                                      ),
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        crossAxisAlignment: CrossAxisAlignment.center,
+                                        children: [
+                                          _buildResponsiveCoinPlan(isNarrowScreen: false, wallet: wallet),
+                                          const SizedBox(width: 24),
+                                          _buildActionButtons(isParent, profile),
+                                        ],
+                                      ),
+                                    ],
+                                  );
+                                }
+                              },
+                            ),
+                          ),
+                          
+                          // Divider line separating the permanent header row from the sub-pages
+                          const SizedBox(height: 16),
+                          
+                          // 📑 SUB-PAGE VIEWPORT HOUSING
+                          Expanded(
+                            child: IndexedStack(
+                              index: _currentIndex, 
+                              children: screens,
+                            ),
+                          ),
+                        ],
+                      ),
               ),
             ),
             bottomNavigationBar: isParent
@@ -764,19 +800,18 @@ Future<void> _approveTaskAndDisburseFunds(String taskId, String childId, double 
                     currentIndex: _currentIndex,
                     selectedItemColor: const Color(0xFF8B5CF6),
                     unselectedItemColor: Colors.grey,
-                    type: BottomNavigationBarType.fixed, // Forces all 4 tabs to align side-by-side beautifully
+                    type: BottomNavigationBarType.fixed,
                     onTap: (index) => setState(() => _currentIndex = index),
                     items: const [
                       BottomNavigationBarItem(icon: Icon(Icons.home_max_rounded), label: 'Dashboard'),
                       BottomNavigationBarItem(icon: Icon(Icons.star_border_rounded), label: 'Missions'),
-                      BottomNavigationBarItem(icon: Icon(Icons.analytics_outlined), label: 'Report'), // ✅ Added visual link trigger tab
+                      BottomNavigationBarItem(icon: Icon(Icons.analytics_outlined), label: 'Report'), 
                       BottomNavigationBarItem(icon: Icon(Icons.receipt_long_rounded), label: 'History'),
                     ],
                   ),
           );
         }
 
-        // Operational Fallback Sync UI...
         return const Scaffold(body: Center(child: Text('Ecosystem disrupted.')));
       },
     );
@@ -785,11 +820,10 @@ Future<void> _approveTaskAndDisburseFunds(String taskId, String childId, double 
 // 🛠️ RETAINED: Restored the signature parameter to accept your original AsyncSnapshot layout
 Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
     final profile = snapshot.data!.profile;
-    final wallet = snapshot.data!.wallet; // ✅ Extracted wallet object safely
     final bool isParent = profile.role == 'parent';
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24.0),
+      padding: const EdgeInsets.symmetric(horizontal: 24.0),
       physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -818,58 +852,15 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
             _buildLinkedChildrenSection(),
           ],
 
-          // --- CHILD SPECIFIC ROOT CONTENT PANELS ---
+          // --- CHILD SPECIFIC CONTENT PANEL CONTENT ONLY ---
           if (!isParent) ...[
-            // 📊 FIXED ADAPTIVE HEADER PIPELINE
-            LayoutBuilder(
-              builder: (context, constraints) {
-                // Evaluates if the single container card width drops below desktop standard limits
-                bool isNarrow = constraints.maxWidth < 650;
-
-                return Wrap(
-                  direction: Axis.horizontal,
-                  alignment: WrapAlignment.spaceBetween, // Pushes elements to opposite edges on desktop
-                  runAlignment: WrapAlignment.start,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: 24, // Clear horizontal gap spacing buffer between components
-                  runSpacing: 16, // Clean vertical line gap padding if items wrap below
-                  children: [
-                    // 1. Left Layout Section: The Profile Greetings Block
-                    ConstrainedBox(
-                      constraints: BoxConstraints(
-                        // Restricts greeting card text width to leave breathing room for the coin bar
-                        maxWidth: isNarrow ? constraints.maxWidth : constraints.maxWidth * 0.45,
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            'Hi, ${profile.username}! 👋', 
-                            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
-                          ),
-                          const SizedBox(height: 4),
-                          const Text('Ready to master your financial goals today?', style: TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
-                        ],
-                      ),
-                    ),
-
-                    // 2. Right Layout Section: Your Fixed 70/20/10 Interactive Plan Widget
-                    ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth: isNarrow ? constraints.maxWidth : constraints.maxWidth * 0.5,
-                      ),
-                      child: _buildResponsiveCoinPlan(isNarrowScreen: isNarrow, wallet: wallet),
-                    ),
-                  ],
-                );
-              },
-            ),
-            
-            const SizedBox(height: 32),
+            // ✅ REDUNDANCIES WIPED: Header components stripped out cleanly 
+            // since they now sit inside the persistent parent column layer!
+            const SizedBox(height: 12),
             _buildLevelProgressCard(profile),
             const SizedBox(height: 24),
             _buildChildTasksSection(profile.id),
+            const SizedBox(height: 24),
           ],
         ],
       ),
@@ -911,18 +902,28 @@ Widget _buildConditionalWrapper({required bool isFlexed, required Widget child})
 
   // 📊 Sub-component: Responsive Money Plan Layout (With Legend Below Title) 
   Widget _buildResponsiveCoinPlan({required bool isNarrowScreen, required dynamic wallet}) {
-    // 🏷️ Combined Header: Places the color legends cleanly directly beneath the main title text string
+    // 🪙 Calculate total combined capital dynamically from the distinct buckets
+    final double totalBalance = (wallet.spendBalance ?? 0.0) + 
+                                (wallet.saveBalance ?? 0.0) + 
+                                (wallet.shareBalance ?? 0.0);
+
+    // 🏷️ Combined Header: Places Total Balance and legends cleanly below the main title
     final Widget planHeader = Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start, // Left-aligns both rows beautifully
+      mainAxisSize: MainAxisSize.min, // ✅ CRITICAL: Constrains vertical expansion rules
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
           'Your Money Plan 🎯',
-          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF6B7280), letterSpacing: 0.5),
         ),
-        const SizedBox(height: 6), // Vertical padding spacer context
+        const SizedBox(height: 4),
+        Text(
+          'RM ${totalBalance.toStringAsFixed(2)}',
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+        ),
+        const SizedBox(height: 6),
         Row(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisSize: MainAxisSize.min, // ✅ Constrains horizontal row expansion bounds
           children: [
             _buildTinyLegendDot(const Color(0xFF4ADE80), 'Save'),
             const SizedBox(width: 6),
@@ -947,14 +948,14 @@ Widget _buildConditionalWrapper({required bool isFlexed, required Widget child})
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.03),
+              color: Colors.black.withOpacity(0.03),
               blurRadius: 4,
               offset: const Offset(0, 2),
             ),
           ],
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisSize: MainAxisSize.min, // ✅ Enforces tight baseline layouts
           children: [
             _buildCapsuleSegment('${wallet.saveBalance.toStringAsFixed(2)} 🟡', const Color(0xFF4ADE80), isLeft: true),
             _buildCapsuleSegment('${wallet.spendBalance.toStringAsFixed(2)} 🟡', const Color(0xFF60A5FA)),
@@ -966,9 +967,8 @@ Widget _buildConditionalWrapper({required bool isFlexed, required Widget child})
 
     // 📱 DYNAMIC LAYOUT ENGINE RETURN CHANNELS
     if (isNarrowScreen) {
-      // On mobile viewports: Stack the text/legend header vertically directly on top of the capsule bar
       return Column(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: MainAxisSize.min, // ✅ CRITICAL: Enforces strict layout height boundaries on mobile viewports
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           planHeader,
@@ -977,13 +977,12 @@ Widget _buildConditionalWrapper({required bool isFlexed, required Widget child})
         ],
       );
     } else {
-      // On wide desktop/web viewports: Place the text/legend layout side-by-side with the capsule bar
       return Row(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: MainAxisSize.min, // ✅ Enforces strict layout width boundaries on desktop web viewports
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           planHeader,
-          const SizedBox(width: 20), // Generous horizontal spacing gap separator
+          const SizedBox(width: 24), 
           coinBar,
         ],
       );

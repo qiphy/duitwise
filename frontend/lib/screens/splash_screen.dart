@@ -239,7 +239,7 @@ class _SplashScreenState extends State<SplashScreen>
 
                       // AVATAR
                       Image.asset(
-                        'assets/avatar.png',
+                        'avatar.png',
                         width: 340,
                         height: 340,
                         fit: BoxFit.contain,
