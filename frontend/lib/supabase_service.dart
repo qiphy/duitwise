@@ -10,7 +10,7 @@ class SupabaseService {
   SupabaseService._internal();
 
   // Replace with your local network IP if testing on a physical device, or use 10.0.2.2 for Android Emulator
-  final String backendBaseUrl = 'http://localhost:8000';
+  final String backendBaseUrl = 'https://duitwise-backend.onrender.com';
 
   Future<void> initialize() async {
     await Supabase.initialize(
