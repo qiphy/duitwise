@@ -26,7 +26,7 @@ class _OnboardingWelcomeScreenState extends State<OnboardingWelcomeScreen> {
   void initState() {
     super.initState();
     // ✅ FIXED: Asset path string corrected to match your exact filename
-    _introController = VideoPlayerController.asset('Intro Video.mp4')
+    _introController = VideoPlayerController.asset('intro_video.mp4')
       ..setVolume(0.0)
       ..initialize().then((_) {
         if (mounted) {
