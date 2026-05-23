@@ -14,8 +14,13 @@ class SupabaseService {
 
   Future<void> initialize() async {
     await Supabase.initialize(
-      url: 'https://tbrefzeytkflqyadayvs.supabase.co',
-      anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRicmVmemV5dGtmbHF5YWRheXZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkzMzAyNDIsImV4cCI6MjA5NDkwNjI0Mn0.n48ovgMT-jbPgKOtBcfgmr7M_0HktWon6Djjn6BkD6g',
+    url: const String.fromEnvironment(
+        'SUPABASE_URL',
+        defaultValue: 'http://127.0.0.1:8000', // Falls back to local container testing
+      ),
+    anonKey: const String.fromEnvironment(
+        'SUPABASE_KEY',
+    )
     );
   }
 
