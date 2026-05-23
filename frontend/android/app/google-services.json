@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "285999310317",
+    "project_id": "duitwise",
+    "storage_bucket": "duitwise.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:285999310317:android:b7033508e230236001f3e4",
+        "android_client_info": {
+          "package_name": "com.example.duitwise"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDHHZOTO0Zv12Ioaoi4cweiEluM5k871g0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:285999310317:android:486ff241fba5365501f3e4",
+        "android_client_info": {
+          "package_name": "com.sudofin.duitwise"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDHHZOTO0Zv12Ioaoi4cweiEluM5k871g0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -4,6 +4,9 @@ class UserModel {
   final String role;
   final int xp;
   final int streak;
+  final int completedTasksCount;
+  final int earnedBadgesCount;
+  final bool hasCompletedOnboarding;
 
   UserModel({
     required this.id,
@@ -11,6 +14,10 @@ class UserModel {
     required this.role,
     required this.xp,
     required this.streak,
+    this.completedTasksCount = 0,
+    this.earnedBadgesCount = 0,
+    this.hasCompletedOnboarding = false,
+    
   });
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
@@ -20,6 +27,9 @@ class UserModel {
       role: json['role'] ?? 'child', 
       xp: json['xp'] is int ? json['xp'] as int : int.parse(json['xp'].toString()),
       streak: json['streak'] is int ? json['streak'] as int : int.parse(json['streak'].toString()),
+      completedTasksCount: (json['completed_tasks_count'] as num?)?.toInt() ?? 0,
+      earnedBadgesCount: (json['earned_badges_count'] as num?)?.toInt() ?? 0,
+      hasCompletedOnboarding: json['has_completed_onboarding'] ?? false,
     );
   }
 
@@ -30,6 +40,8 @@ class UserModel {
       'role': role,
       'xp': xp,
       'streak': streak,
+      'completed_tasks_count': completedTasksCount,
+      'earned_badges_count': earnedBadgesCount,
     };
   }
 }
@@ -78,7 +90,6 @@ class WalletModel {
 
 class QuestModel {
   final String id;
-  final String title;
   final String story; // 🐯 This is the narrative body text!
   final String choiceA;
   final String choiceB;
@@ -88,7 +99,6 @@ class QuestModel {
 
   QuestModel({
     required this.id,
-    required this.title,
     required this.story,
     required this.choiceA,
     required this.choiceB,
@@ -100,7 +110,6 @@ class QuestModel {
   factory QuestModel.fromJson(Map<String, dynamic> json) {
     return QuestModel(
       id: json['id'] ?? '',
-      title: json['title'] ?? '',
       story: json['story'] ?? '', // Maps from your DB column seamlessly
       choiceA: json['choice_a'] ?? '',
       choiceB: json['choice_b'] ?? '',
@@ -114,7 +123,6 @@ class QuestModel {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
-      'title': title,
       'story': story,
       'choice_a': choiceA,
       'choice_b': choiceB,

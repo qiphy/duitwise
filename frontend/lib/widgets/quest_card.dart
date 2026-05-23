@@ -22,10 +22,6 @@ class QuestCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              quest.title,
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
-            ),
             const SizedBox(height: 12),
             Text(
               quest.story,
