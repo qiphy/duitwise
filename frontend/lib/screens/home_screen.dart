@@ -8,6 +8,7 @@ import '../widgets/balance_card.dart';
 import 'quest_screen.dart';
 import 'goals_screen.dart';
 import 'auth_screen.dart'; 
+import 'package:image_picker/image_picker.dart';
 
 // --- Local Dashboard Data Composition Wrapper ---
 class DashboardData {
@@ -207,6 +208,220 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // --- Enhanced Parent Control Sheet: Handles Assignment and Live Image Verification ---
+  void _showParentTaskManagerBottomSheet(String childName, String childId) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (context) {
+        return StatefulBuilder( // Enables internal list mutations within the open bottom sheet context
+          builder: (BuildContext context, StateSetter setModalState) {
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.85,
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header Block
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('$childName\'s Missions 🎯', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                      IconButton(
+                        icon: const Icon(Icons.add_circle_outline_rounded, color: Color(0xFF8B5CF6), size: 28),
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _showAddTaskBottomSheet(childName, childId); // Falls back to your creation form
+                        },
+                      )
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Active Task Tracker Stream
+                  Expanded(
+                    child: FutureBuilder<List<dynamic>>(
+                      future: supabaseService.client
+                          .from('tasks')
+                          .select('id, title, reward_amount, status, proof_url')
+                          .eq('profile_id', childId)
+                          .order('id', ascending: false),
+                      builder: (context, taskSnapshot) {
+                        if (taskSnapshot.connectionState == ConnectionState.waiting) {
+                          return const Center(child: CircularProgressIndicator());
+                        }
+                        
+                        final tasks = taskSnapshot.data ?? [];
+                        if (tasks.isEmpty) {
+                          return const Center(child: Text('No missions assigned yet. Tap the + icon above to start!'));
+                        }
+
+                        return ListView.builder(
+                          itemCount: tasks.length,
+                          itemBuilder: (context, idx) {
+                            final t = tasks[idx];
+                            final String taskId = t['id'];
+                            final String title = t['title'] ?? 'Secret Mission';
+                            final double reward = (t['reward_amount'] ?? 0.0).toDouble();
+                            final String status = t['status'] ?? 'assigned';
+                            final String? proofUrl = t['proof_url'];
+
+                            bool isPending = status == 'pending';
+
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 12),
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: isPending ? Colors.orange[50]!.withOpacity(0.5) : Colors.grey[50],
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: isPending ? Colors.orange[200]! : Colors.transparent),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Expanded(
+                                        child: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                      ),
+                                      Text('RM ${reward.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF10B981))),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  
+                                  // 🖼️ Proof Content Frame Injection
+                                  if (proofUrl != null && proofUrl.isNotEmpty) ...[
+                                    const Text('Photo Verification Sent:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey)),
+                                    const SizedBox(height: 6),
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: GestureDetector(
+                                        onTap: () => _showFullImagePreview(proofUrl),
+                                        child: Image.network(
+                                          proofUrl,
+                                          height: 120,
+                                          width: double.infinity,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (c, e, s) => const Text('⚠️ Image display failure'),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 12),
+                                  ],
+
+                                  // Action Footer Layer
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Chip(
+                                        label: Text(status.toUpperCase(), style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                                        backgroundColor: isPending ? Colors.orange[100] : (status == 'completed' ? Colors.green[100] : Colors.blue[100]),
+                                        side: BorderSide.none,
+                                      ),
+                                      if (isPending)
+                                        ElevatedButton.icon(
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: Colors.green[600],
+                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                          ),
+                                          icon: const Icon(Icons.check_circle, size: 16, color: Colors.white),
+                                          label: const Text('Approve & Pay', style: TextStyle(color: Colors.white, fontSize: 12)),
+                                          onPressed: () async {
+                                            await _approveTaskAndDisburseFunds(taskId, childId, reward, title);
+                                            setModalState(() {}); // Triggers dynamic data refetch inside the open bottom sheet view
+                                            _refreshData();       // Syncs background state controllers
+                                          },
+                                        ),
+                                    ],
+                                  )
+                                ],
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              )
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // --- Image Lightbox Overlay Modal Dialogue ---
+  void _showFullImagePreview(String url) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(16),
+        child: Stack(
+          alignment: Alignment.topRight,
+          children: [
+            InteractiveViewer( // Enables native scale-to-zoom pinch gestures natively
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Image.network(url, fit: BoxFit.contain),
+              ),
+            ),
+            IconButton(
+              icon: const CircleAvatar(backgroundColor: Colors.black45, child: Icon(Icons.close, color: Colors.white)),
+              onPressed: () => Navigator.pop(context),
+            )
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- Core Wallet Balance Settler Transaction Logic ---
+  Future<void> _approveTaskAndDisburseFunds(String taskId, String childId, double amount, String taskTitle) async {
+    try {
+      // 1. Transaction A: Mark task as completed in Postgres
+      await supabaseService.client
+          .from('tasks')
+          .update({'status': 'completed'})
+          .eq('id', taskId);
+
+      // 2. Transaction B: Route wallet update requests via API or direct increment structures
+      // Fetch child's current wallet metrics safely first
+      final walletResponse = await http.get(Uri.parse('${supabaseService.backendBaseUrl}/wallet/$childId'));
+      
+      if (walletResponse.statusCode == 200) {
+        final currentWallet = WalletModel.fromJson(jsonDecode(walletResponse.body));
+        
+        // Distribute complete balance directly into the child's Save/Spend tracking targets
+        // For this breakdown, let's distribute rewards straight into the 'Spend' channel balance
+        final double updatedSpend = currentWallet.spendBalance + amount;
+
+        await http.put(
+          Uri.parse('${supabaseService.backendBaseUrl}/wallet/$childId'),
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({
+            "saveBalance": currentWallet.saveBalance,
+            "spendBalance": updatedSpend,
+            "shareBalance": currentWallet.shareBalance
+          }),
+        );
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Payout completed for "$taskTitle"! Saved balance updated. 🪙')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Transaction execution fault: $e'), backgroundColor: Colors.redAccent));
+      }
+    }
+  }
+
   void _showChangeUsernameDialog(String currentUsername) {
     final TextEditingController usernameController = TextEditingController(text: currentUsername);
     final formKey = GlobalKey<FormState>();
@@ -278,32 +493,25 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _handleProfileMenuAction(String value, String currentUsername) {
-    switch (value) {
-      case 'settings':
-        showModalBottomSheet(
-          context: context,
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          builder: (context) => Padding(
-            padding: const EdgeInsets.all(24.0),
-          ),
-        );
-        break;
-        
-      case 'logout':
-        supabaseService.client.auth.signOut();
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (context) => const AuthScreen()),
-          (route) => false,
-        );
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Logged out successfully!')),
-        );
-        break;
+      switch (value) {
+        case 'settings':
+          // 🛠️ FIX: Call your existing username dialog directly here
+          _showChangeUsernameDialog(currentUsername);
+          break;
+          
+        case 'logout':
+          supabaseService.client.auth.signOut();
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (context) => const AuthScreen()),
+            (route) => false,
+          );
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Logged out successfully!')),
+          );
+          break;
+      }
     }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -330,7 +538,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   items: const [
                     BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Dashboard'),
                     BottomNavigationBarItem(icon: Icon(Icons.assignment), label: 'Missions'),
-                    BottomNavigationBarItem(icon: Icon(Icons.star), label: 'Dreams'),
                   ],
                 ),
         );
@@ -422,7 +629,7 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 24),
               _buildLinkedChildrenSection(),
             ] else ...[
-              BalanceCard(wallet: wallet),
+              _buildLevelProgressCard(profile),
               const SizedBox(height: 24),
               _buildChildTasksSection(profile.id), 
             ],
@@ -609,7 +816,187 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildLevelProgressCard(dynamic profile) {
+  // 1. Calculate leveling metrics from total accumulated XP
+  final int totalXp = profile.xp ?? 0;
+  final int streak = profile.streak ?? 1;
+  
+  const int xpPerLevel = 500;
+  final int currentLevel = (totalXp ~/ xpPerLevel) + 1;
+  final int currentXpInLevel = totalXp % xpPerLevel;
+
+  // 2. Determine dynamic titles based on current milestone brackets
+  String levelTitle = 'Coin Collector';
+  String nextLevelTitle = 'Savings Star 💎';
+  
+  if (currentLevel >= 3) {
+    levelTitle = 'Goal Getter 🎯';
+    nextLevelTitle = 'Savings Star 💎';
+  } else if (currentLevel >= 5) {
+    levelTitle = 'Savings Star 💎';
+    nextLevelTitle = 'Wealth Wizard 👑';
+  }
+
+  final double progressPercent = (currentXpInLevel / xpPerLevel).clamp(0.0, 1.0);
+
+  return Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(20),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(24),
+      border: Border.all(color: const Color(0xFFF3E8FF), width: 2),
+      boxShadow: [
+        BoxShadow(
+          color: const Color(0xFF8B5CF6).withOpacity(0.04),
+          blurRadius: 16,
+          offset: const Offset(0, 8),
+        ),
+      ],
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Top Header Row: Title and XP Badge
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(
+              children: [
+                const Text('🎯', style: TextStyle(fontSize: 28)),
+                const SizedBox(width: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      levelTitle,
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Level $currentLevel',
+                      style: const TextStyle(fontSize: 13, color: Color(0xFF9CA3AF), fontWeight: FontWeight.w500),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFBBF24),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.bolt, color: Colors.white, size: 16),
+                  const SizedBox(width: 4),
+                  Text(
+                    '$currentXpInLevel XP',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+
+        // Custom Gradient Progress Bar
+        Stack(
+          children: [
+            Container(
+              height: 14,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3F4F6),
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                return Container(
+                  height: 14,
+                  width: constraints.maxWidth * progressPercent,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFA78BFA), Color(0xFFEC4899), Color(0xFF3B82F6)],
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                    ),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+
+        // Progress Metrics and Next Target indicators
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              '$currentXpInLevel / $xpPerLevel XP',
+              style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280), fontWeight: FontWeight.w600),
+            ),
+            Row(
+              children: [
+                const Icon(Icons.star_border_rounded, size: 14, color: Color(0xFF8B5CF6)),
+                const SizedBox(width: 4),
+                Text(
+                  'Next: $nextLevelTitle',
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF8B5CF6), fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+
+        // Bottom Stats Grid
+        Row(
+          children: [
+            _buildStatBox('12', 'Tasks Done', const Color(0xFF2563EB)),
+            const SizedBox(width: 12),
+            _buildStatBox('$streak', 'Day Streak', const Color(0xFF16A34A)),
+            const SizedBox(width: 12),
+            _buildStatBox('3', 'Badges', const Color(0xFF7C3AED)),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+Widget _buildStatBox(String metric, String label, Color metricColor) {
+  return Expanded(
+    child: Container(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF9FAFB),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        children: [
+          Text(
+            metric,
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: metricColor),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280), fontWeight: FontWeight.w500),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
   // --- Child Component: Live Tasks Display Panel ---
+// --- Enhanced Child Component: Live Tasks Display Panel with Photo Proof ---
   Widget _buildChildTasksSection(String childId) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -622,17 +1009,12 @@ class _HomeScreenState extends State<HomeScreen> {
         FutureBuilder<List<dynamic>>(
           future: supabaseService.client
               .from('tasks')
-              .select('id, title, reward_amount, status')
+              .select('id, title, reward_amount, status, proof_url') // Added proof_url field
               .eq('profile_id', childId)
-              .order('id', ascending: false), // Shows newest assigned tasks first
+              .order('id', ascending: false),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(24.0),
-                  child: CircularProgressIndicator(),
-                ),
-              );
+              return const Center(child: Padding(padding: EdgeInsets.all(24.0), child: CircularProgressIndicator()));
             }
 
             final tasksList = snapshot.data ?? [];
@@ -641,23 +1023,14 @@ class _HomeScreenState extends State<HomeScreen> {
               return Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                ),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
                 child: Column(
                   children: const [
                     Text('🎉', style: TextStyle(fontSize: 36)),
                     SizedBox(height: 8),
-                    Text(
-                      'All cleaned up!',
-                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF374151)),
-                    ),
+                    Text('All cleaned up!', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF374151))),
                     SizedBox(height: 4),
-                    Text(
-                      'No tasks assigned right now. Go play outside!',
-                      style: TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
-                    ),
+                    Text('No tasks assigned right now. Go play outside!', style: TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
                   ],
                 ),
               );
@@ -669,9 +1042,12 @@ class _HomeScreenState extends State<HomeScreen> {
               itemCount: tasksList.length,
               itemBuilder: (context, index) {
                 final task = tasksList[index];
+                final String taskId = task['id'];
                 final String title = task['title'] ?? 'Secret Mission';
                 final double reward = (task['reward_amount'] ?? 0.0).toDouble();
                 final String status = task['status'] ?? 'assigned';
+
+                bool isPendingOrDone = status == 'pending' || status == 'completed';
 
                 return Card(
                   color: Colors.white,
@@ -679,7 +1055,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   elevation: 0,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                   child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     leading: Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
@@ -688,27 +1064,35 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       child: const Icon(Icons.assignment_turned_in_rounded, color: Color(0xFF8B5CF6)),
                     ),
-                    title: Text(
-                      title, 
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF1F2937))
-                    ),
+                    title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF1F2937))),
                     subtitle: Text(
                       'Reward: ${reward.toInt()} Coins 🟡',
                       style: const TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.w600, fontSize: 13),
                     ),
-                    trailing: Chip(
-                      backgroundColor: status == 'assigned' ? Colors.blue[50] : Colors.green[50],
-                      label: Text(
-                        status.toUpperCase(),
-                        style: TextStyle(
-                          fontSize: 11, 
-                          fontWeight: FontWeight.bold, 
-                          color: status == 'assigned' ? Colors.blue[700] : Colors.green[700]
-                        ),
-                      ),
-                      side: BorderSide.none,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    ),
+                    trailing: isPendingOrDone
+                        ? Chip(
+                            backgroundColor: status == 'pending' ? Colors.orange[50] : Colors.green[50],
+                            label: Text(
+                              status == 'pending' ? 'PENDING APPROVAL' : 'COMPLETED',
+                              style: TextStyle(
+                                fontSize: 11, 
+                                fontWeight: FontWeight.bold, 
+                                color: status == 'pending' ? Colors.orange[700] : Colors.green[700]
+                              ),
+                            ),
+                            side: BorderSide.none,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          )
+                        : ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF8B5CF6),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            ),
+                            icon: const Icon(Icons.camera_alt_rounded, size: 16, color: Colors.white),
+                            label: const Text('Complete', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                            onPressed: () => _submitTaskProof(taskId, title),
+                          ),
                   ),
                 );
               },
@@ -717,6 +1101,72 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ],
     );
+  }
+
+  // --- Photo Proof Handler Execution Logic ---
+  Future<void> _submitTaskProof(String taskId, String taskTitle) async {
+    final ImagePicker picker = ImagePicker();
+    
+    // 1. Capture the photo using the device camera
+    final XFile? image = await picker.pickImage(
+      source: ImageSource.camera,
+      imageQuality: 70, // Compresses image slightly for lighter network payloads
+    );
+
+    if (image == null) return; // Child canceled camera action
+
+    // Show loading indicators
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Row(
+        children: [
+          CircularProgressIndicator(color: Colors.white),
+          SizedBox(width: 16),
+          Text("Uploading proof image to Mom & Dad..."),
+        ],
+      ), duration: Duration(days: 1)), // Long duration kept alive manually
+    );
+
+    try {
+      // 2. Read file bits and upload to Supabase Storage Bucket
+      final bytes = await image.readAsBytes();
+      final String fileExtension = image.path.split('.').last;
+      final String fileName = '${supabaseService.currentUserId}_${taskId}_${DateTime.now().millisecondsSinceEpoch}.$fileExtension';
+      final String filePath = 'proofs/$fileName';
+
+      await supabaseService.client.storage
+          .from('task-proofs')
+          .uploadBinary(filePath, bytes);
+
+      // 3. Resolve the public asset path URL
+      final String publicUrl = supabaseService.client.storage
+          .from('task-proofs')
+          .getPublicUrl(filePath);
+
+      // 4. Update Database Row state with URL link
+      await supabaseService.client
+          .from('tasks')
+          .update({
+            'status': 'pending', // Marks it for parent approval verification loop
+            'proof_url': publicUrl,
+          })
+          .eq('id', taskId);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        _refreshData();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Sent proof for "$taskTitle" successfully! Waiting for approval. 🌟')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to transmit photo validation: $e'), backgroundColor: Colors.redAccent),
+        );
+      }
+    }
   }
 
   // --- Parent Component: Localized FPX Direct Debit Link Card (Layout Bounded) ---
@@ -856,7 +1306,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildLinkedChildrenSection() {
+Widget _buildLinkedChildrenSection() {
     final String? parentId = supabaseService.currentUserId;
 
     return Column(
@@ -872,18 +1322,12 @@ class _HomeScreenState extends State<HomeScreen> {
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(32),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(24),
-            ),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)),
             child: Column(
               children: const [
                 Text('🔒', style: TextStyle(fontSize: 44)),
                 SizedBox(height: 12),
-                Text(
-                  'Household Pairings Suspended', 
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF374151)),
-                ),
+                Text('Household Pairings Suspended', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF374151))),
                 SizedBox(height: 4),
                 Text(
                   'Your paired child accounts are safely stored but temporarily locked. Reconnect your bank account via FPX above to instantly restore allowance distribution profiles and task management panels.',
@@ -895,19 +1339,15 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ] else ... [
           FutureBuilder<List<dynamic>>(
+            // 💡 JOIN QUERY: Fetching profiles along with their tasks to scan for pending verification photos
             future: supabaseService.client
                 .from('profiles')
-                .select('id, username, email, is_approved')
+                .select('id, username, email, is_approved, tasks(id, status)')
                 .eq('parent_id', parentId ?? '')
                 .eq('role', 'child'),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(24.0),
-                    child: CircularProgressIndicator(),
-                  ),
-                );
+                return const Center(child: Padding(padding: EdgeInsets.all(24.0), child: CircularProgressIndicator()));
               }
 
               final kidsList = snapshot.data ?? [];
@@ -916,18 +1356,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 return Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(32),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(24),
-                  ),
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)),
                   child: Column(
                     children: [
                       const Text('📡', style: TextStyle(fontSize: 44)),
                       const SizedBox(height: 12),
-                      const Text(
-                        'Awaiting Child Connection',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF374151)),
-                      ),
+                      const Text('Awaiting Child Connection', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF374151))),
                       const SizedBox(height: 6),
                       Text(
                         'Give your registered email address to your kid:\n"${supabaseService.client.auth.currentUser?.email ?? ''}"',
@@ -948,6 +1382,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   final String kidName = kid['username'] ?? 'Young Saver';
                   final String kidId = kid['id'];
                   final bool isApproved = kid['is_approved'] ?? false;
+                  
+                  // Calculate how many tasks are sitting in the 'pending' state waiting for parental review
+                  final List<dynamic> tasks = kid['tasks'] ?? [];
+                  final int pendingCount = tasks.where((t) => t['status'] == 'pending').length;
 
                   return Card(
                     color: Colors.white,
@@ -956,30 +1394,47 @@ class _HomeScreenState extends State<HomeScreen> {
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                     child: ListTile(
                       contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                      leading: CircleAvatar(
-                        backgroundColor: Colors.amber[100],
-                        radius: 24,
-                        child: const Text('🐯', style: TextStyle(fontSize: 24)),
+                      leading: Badge(
+                        isLabelVisible: pendingCount > 0,
+                        label: Text('$pendingCount'),
+                        backgroundColor: Colors.orange,
+                        child: CircleAvatar(
+                          backgroundColor: Colors.amber[100],
+                          radius: 24,
+                          child: const Text('🐯', style: TextStyle(fontSize: 24)),
+                        ),
                       ),
                       title: Text(kidName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                       subtitle: Text(
-                        isApproved ? 'Allowance Status: Active' : 'Status: Pending Approval Gates',
-                        style: TextStyle(color: isApproved ? Colors.green : Colors.orange, fontWeight: FontWeight.w500),
+                        !isApproved 
+                            ? 'Status: Pending Approval Gates'
+                            : pendingCount > 0 
+                                ? '⚠️ Has tasks awaiting proof check' 
+                                : 'Allowance Status: Active',
+                        style: TextStyle(
+                          color: !isApproved ? Colors.orange : (pendingCount > 0 ? Colors.orange[800] : Colors.green), 
+                          fontWeight: FontWeight.w500
+                        ),
                       ),
                       trailing: ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: isApproved ? const Color(0xFF8B5CF6) : Colors.orange,
+                          backgroundColor: !isApproved 
+                              ? Colors.orange 
+                              : (pendingCount > 0 ? Colors.orange[700] : const Color(0xFF8B5CF6)),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         ),
                         onPressed: () {
-                          if (isApproved) {
-                            _showAddTaskBottomSheet(kidName, kidId);
-                          } else {
+                          if (!isApproved) {
                             _handleInstantApproval(kidId, kidName);
+                          } else {
+                            // Opens up the task manager control view
+                            _showParentTaskManagerBottomSheet(kidName, kidId);
                           }
                         },
                         child: Text(
-                          isApproved ? 'Add Task' : 'Approve Link',
+                          !isApproved 
+                              ? 'Approve Link' 
+                              : (pendingCount > 0 ? 'Review Proof' : 'Add Task'),
                           style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
                         ),
                       ),
