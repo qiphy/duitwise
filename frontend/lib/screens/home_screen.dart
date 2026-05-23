@@ -793,7 +793,7 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // --- PARENT SPECIFIC ROOT HEADER VIEWS (Retained for parent profile mode only) ---
+          // --- PARENT SPECIFIC ROOT HEADER VIEWS ---
           if (isParent) ...[
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -819,6 +819,65 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
 
           // --- CHILD SPECIFIC ROOT CONTENT PANELS ---
           if (!isParent) ...[
+            // 📊 ADAPTIVE SPLIT ROW/COLUMN HEADER DESIGN
+            LayoutBuilder(
+              builder: (context, constraints) {
+                // Tipping breakpoint: if screen space is narrower than 500px, break to vertical column layout
+                bool useVerticalLayout = constraints.maxWidth < 500;
+
+                return Flex(
+                  direction: useVerticalLayout ? Axis.vertical : Axis.horizontal,
+                  crossAxisAlignment: useVerticalLayout ? CrossAxisAlignment.stretch : CrossAxisAlignment.center,
+                  children: [
+                    // 1. Left Element: The Greetings Greeting Box Frame
+                    _buildConditionalWrapper(
+                      isFlexed: !useVerticalLayout,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Hi, ${profile.username}! 👋', 
+                            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text('Ready to master your financial goals today?', style: TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                        ],
+                      ),
+                    ),
+
+                    // Sizing Gap Divider Context
+                    if (useVerticalLayout) const SizedBox(height: 16) else const SizedBox(width: 16),
+
+                    // 2. Right Element: The Money Metric Bar / Balance Display Card
+                  _buildConditionalWrapper(
+                    isFlexed: !useVerticalLayout,
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF111827),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Total Balance', style: TextStyle(color: Colors.grey, fontSize: 13)),
+                          Text(
+                            // ✅ FIXED: Summing your three 70/20/10 rule data model buckets together dynamically
+                            'RM ${((snapshot.data!.wallet?.spendBalance ?? 0.0) + 
+                                   (snapshot.data!.wallet?.saveBalance ?? 0.0) + 
+                                   (snapshot.data!.wallet?.shareBalance ?? 0.0)).toStringAsFixed(2)}', 
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  ],
+                );
+              },
+            ),
+            
+            const SizedBox(height: 24),
             _buildLevelProgressCard(profile),
             const SizedBox(height: 24),
             _buildChildTasksSection(profile.id),
@@ -826,6 +885,12 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
         ],
       ),
     );
+}
+
+// 🛡️ HELPER STRUCTURAL WRAPPER METHOD
+Widget _buildConditionalWrapper({required bool isFlexed, required Widget child}) {
+  // If in Row view, wrap components with Expanded to force them to consume exactly 50% width dimensions
+  return isFlexed ? Expanded(child: child) : child;
 }
 
 
