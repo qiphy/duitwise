@@ -62,71 +62,82 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  Future<DashboardData> _fetchDashboardTelemetry() async {
-    final String? profileId = supabaseService.currentUserId;
+Future<DashboardData> _fetchDashboardTelemetry() async {
+    final String? loggedInUserId = supabaseService.currentUserId;
 
-    if (profileId == null) {
+    if (loggedInUserId == null) {
       throw Exception('No active authenticated user session detected.');
     }
 
-    final walletUri = Uri.parse('${supabaseService.backendBaseUrl}/wallet/$profileId');
-
     try {
-      final responses = await Future.wait<dynamic>([
-        http.get(walletUri),
-        supabaseService.client.from('profiles').select().eq('id', profileId).maybeSingle(),
-      ]);
+      // 1. Fetch the logged-in user's profile metadata row from Postgres
+      final profileDbResponse = await supabaseService.client
+          .from('profiles')
+          .select()
+          .eq('id', loggedInUserId)
+          .maybeSingle();
 
-      final walletHttpResponse = responses[0] as http.Response;
-      final profileDbResponse = responses[1];
-
-      if (walletHttpResponse.statusCode == 200) {
-              final walletMetrics = WalletModel.fromJson(jsonDecode(walletHttpResponse.body));
-              
-              UserModel profileMetrics;
-              if (profileDbResponse != null) {
-                profileMetrics = UserModel.fromJson(profileDbResponse as Map<String, dynamic>);
-                
-                // 💡 AUTOMATION LINK: Parse bank metadata attributes straight into active state fields
-                final String? dbBank = profileDbResponse['linked_bank_name'];
-                final String? dbAccount = profileDbResponse['bank_account_number'];
-                
-                if (dbBank != null && dbAccount != null) {
-                  _isBankLinked = true;
-                  _selectedBank = dbBank;
-                  _accountNumberController.text = dbAccount;
-                } else {
-                  _isBankLinked = false;
-                }
-              } else {
-                profileMetrics = UserModel(
-                  id: profileId, username: 'Young Saver', role: 'child', xp: 0, streak: 1,
-                );
-              }
-
-              return DashboardData(profile: profileMetrics, wallet: walletMetrics);
-      } else if (walletHttpResponse.statusCode == 404) {
-        String userRole = 'child';
-        if (profileDbResponse != null) {
-          userRole = profileDbResponse['role'] ?? 'child';
-        }
-
-        if (userRole == 'parent') {
-          final emptyWalletForParent = WalletModel(
-            profileId: profileId,
-            saveBalance: 0.00,
-            spendBalance: 0.00,
-            shareBalance: 0.00,
-          );
-          
-          final profileMetrics = UserModel.fromJson(profileDbResponse as Map<String, dynamic>);
-          return DashboardData(profile: profileMetrics, wallet: emptyWalletForParent);
-        } else {
-          throw Exception('Wallet profile data records are still being synchronized. Please pull down to refresh!');
-        }
-      } else {
-        throw Exception('Failed to synchronize current wallet accounts.');
+      if (profileDbResponse == null) {
+        throw Exception('User profile metadata row not found.');
       }
+
+      final profileMetrics = UserModel.fromJson(profileDbResponse as Map<String, dynamic>);
+      String targetWalletUserId = loggedInUserId;
+
+      // 🦉 ROLE CHECK: If a Parent is viewing the dashboard, check for their linked child
+      if (profileMetrics.role == 'parent') {
+        final List<dynamic> linkedKids = await supabaseService.client
+            .from('profiles')
+            .select('id')
+            .eq('parent_id', loggedInUserId)
+            .eq('role', 'child')
+            .limit(1);
+
+        if (linkedKids.isNotEmpty) {
+          // Point the target pointer context to pull the child's wallet row instead!
+          targetWalletUserId = linkedKids.first['id'];
+        }
+      }
+
+      // 2. FETCH the wallet data row DIRECTLY from your 'wallets' database table
+      final List<dynamic> walletRecords = await supabaseService.client
+          .from('wallets')
+          .select('save_balance, spend_balance, share_balance')
+          .eq('profile_id', targetWalletUserId);
+
+      // Map backend values seamlessly into your frontend WalletModel structure
+      WalletModel walletMetrics;
+      if (walletRecords.isNotEmpty) {
+        final currentWalletData = walletRecords.first;
+        walletMetrics = WalletModel(
+          profileId: targetWalletUserId,
+          saveBalance: (currentWalletData['save_balance'] ?? 0.0).toDouble(),
+          spendBalance: (currentWalletData['spend_balance'] ?? 0.0).toDouble(),
+          shareBalance: (currentWalletData['share_balance'] ?? 0.0).toDouble(),
+        );
+      } else {
+        // Fallback default if a wallet record row doesn't exist yet in PostgreSQL
+        walletMetrics = WalletModel(
+          profileId: targetWalletUserId,
+          saveBalance: 0.00,
+          spendBalance: 0.00,
+          shareBalance: 0.00,
+        );
+      }
+
+      // 💡 AUTOMATION LINK: Parse bank metadata attributes straight into active state fields for parents
+      final String? dbBank = profileDbResponse['linked_bank_name'];
+      final String? dbAccount = profileDbResponse['bank_account_number'];
+      
+      if (dbBank != null && dbAccount != null) {
+        _isBankLinked = true;
+        _selectedBank = dbBank;
+        _accountNumberController.text = dbAccount;
+      } else {
+        _isBankLinked = false;
+      }
+
+      return DashboardData(profile: profileMetrics, wallet: walletMetrics);
     } catch (e) {
       throw Exception('Failed to synchronize dashboard telemetry: $e');
     }
@@ -228,8 +239,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
 // --- Enhanced Parent Control Sheet: Task Validation & Household Disconnection ---
-  void _showParentTaskManagerBottomSheet(String childName, String childId) {
-    showModalBottomSheet(
+  Future<void> _showParentTaskManagerBottomSheet(String childName, String childId) async {
+    await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
@@ -541,56 +552,63 @@ class _HomeScreenState extends State<HomeScreen> {
   // --- Core Wallet Balance Settler Transaction Logic ---
 Future<void> _approveTaskAndDisburseFunds(String taskId, String childId, double amount, String taskTitle) async {
     try {
-      // 1. Transaction A: Mark task as completed in Postgres
+      // 1. Mark task as completed in Postgres
       await supabaseService.client
           .from('tasks')
           .update({'status': 'completed'})
           .eq('id', taskId);
 
-      // 💾 Inside your _approveTaskAndDisburseFunds method, right after changing task status:
+      // 2. Increment the completed task metrics counter row 
       await supabaseService.client.rpc(
         'increment_completed_tasks', 
         params: {'user_id': childId}
       );
 
-      // 2. Transaction B: Route wallet update requests via API or direct increment structures
-      // Fetch child's current wallet metrics safely first
-      final walletResponse = await http.get(Uri.parse('${supabaseService.backendBaseUrl}/wallet/$childId'));
-      
-      if (walletResponse.statusCode == 200) {
-        final currentWallet = WalletModel.fromJson(jsonDecode(walletResponse.body));
+      // 3. FETCH current wallet row metrics DIRECTLY from your Supabase database table
+      final List<dynamic> walletRecords = await supabaseService.client
+          .from('wallets')
+          .select('save_balance, spend_balance, share_balance')
+          .eq('profile_id', childId);
+
+      if (walletRecords.isNotEmpty) {
+        final currentWallet = walletRecords.first;
         
-        // Distribute complete balance directly into the child's Save/Spend tracking targets
-        // For this breakdown, let's distribute rewards straight into the 'Spend' channel balance
-        final double updatedSpend = currentWallet.spendBalance + amount;
+        // 🌟 CRITICAL TYPE FIX: Parse the incoming Postgres numeric string fields safely into real doubles
+        final double currentSpend = currentWallet['spend_balance'] != null 
+            ? double.parse(currentWallet['spend_balance'].toString()) 
+            : 0.0;
+            
+        final double updatedSpend = currentSpend + amount;
 
-        await http.put(
-          Uri.parse('${supabaseService.backendBaseUrl}/wallet/$childId'),
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode({
-            "saveBalance": currentWallet.saveBalance,
-            "spendBalance": updatedSpend,
-            "shareBalance": currentWallet.shareBalance
-          }),
-        );
+        // 4. UPDATE the wallet balance database table rows directly using the clean column keys
+        await supabaseService.client
+            .from('wallets')
+            .update({
+              'spend_balance': updatedSpend, 
+            })
+            .eq('profile_id', childId);
 
-        // ✅ NEW: Log the transaction ledger row directly into Supabase upon successful wallet credit
+        // 5. Log the transaction ledger history row directly into Supabase
         await supabaseService.client.from('transactions').insert({
           'profile_id': childId,
           'title': taskTitle,
-          'amount': amount, // Positive numeric value represents income
+          'amount': amount, 
           'category': 'Task',
         });
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Payout completed for "$taskTitle"! Saved balance updated. 🪙')),
+            SnackBar(content: Text('Payout completed for "$taskTitle"! Spend balance updated in database. 🪙')),
           );
         }
+      } else {
+        throw Exception('No direct wallet profile record matched for child ID: $childId');
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Transaction execution fault: $e'), backgroundColor: Colors.redAccent));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Database Transaction Fault: $e'), backgroundColor: Colors.redAccent),
+        );
       }
     }
   }
@@ -892,6 +910,7 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
         children: [
           // --- PARENT SPECIFIC ROOT HEADER VIEWS ---
           if (isParent) ...[
+            const SizedBox(height: 24),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -916,6 +935,7 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
 
           // --- CHILD SPECIFIC CONTENT PANEL CONTENT ONLY ---
           if (!isParent) ...[
+            const SizedBox(height: 24),
             // ✅ REDUNDANCIES WIPED: Header components stripped out cleanly 
             // since they now sit inside the persistent parent column layer!
             const SizedBox(height: 12),
@@ -2120,9 +2140,14 @@ Widget _buildLinkedChildrenSection() {
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(20),
                           child: InkWell(
-                            onTap: () {
+                            // ✅ UPDATED REACTIVE LAYOUT CALL ROUTE:
+                            onTap: () async { // 👈 Ensure 'async' is here
                               if (isApproved) {
-                                _showParentTaskManagerBottomSheet(kidName, kidId);
+                                // 🌟 THE JEDI MOVEMENT: Await the bottom sheet lifespan closure directly
+                                await _showParentTaskManagerBottomSheet(kidName, kidId);
+                                
+                                // 🚀 Triggers immediately to pull fresh values from the DB right when the sheet is closed!
+                                _refreshData();
                               } else {
                                 _handleInstantApproval(kidId, kidName);
                               }

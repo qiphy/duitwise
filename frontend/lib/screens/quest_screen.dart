@@ -38,23 +38,24 @@ class VideoQuizModel {
 }
 
 // 📋 Global static listing of your precise data payloads
+// 🌟 UPDATE THIS BLOCK: Map directly to your public Supabase Storage paths
 final List<VideoQuizModel> eduVideosList = [
   VideoQuizModel(
-    assetPath: 'assets/saving_video.mp4',
+    assetPath: 'https://tbrefzeytkflqyadayvs.supabase.co/storage/v1/object/public/quest-videos/saving_video.mp4', 
     question: 'What helped the tiger cub get closer to buying the toy rocket ship?',
     options: ['Wishing on a star.', 'Putting a coin into his spaceship bank every time.'],
     correctIndex: 1,
     keyLesson: 'When you save a little bit at a time, your money grows until you reach your goal!',
   ),
   VideoQuizModel(
-    assetPath: 'assets/needs_video.mp4',
+    assetPath: 'https://tbrefzeytkflqyadayvs.supabase.co/storage/v1/object/public/quest-videos/needs_video.mp4',
     question: 'Why did the fox skip buying the shiny balloon?',
     options: ['He didn\'t have enough coins.', 'He wanted to save his coins for the train ride.'],
     correctIndex: 1,
     keyLesson: 'Wants are fun to have, but it is smart to take care of our important plans first!',
   ),
   VideoQuizModel(
-    assetPath: 'assets/account_video.mp4',
+    assetPath: 'https://tbrefzeytkflqyadayvs.supabase.co/storage/v1/object/public/quest-videos/account_video.mp4',
     question: 'What does it mean when the gold coin "sprouted" and grew into more coins inside the bank?',
     options: ['The bank added extra money called "interest" as a reward.', 'The soil in the pot was magical.'],
     correctIndex: 0,
@@ -123,6 +124,22 @@ try {
         outcomeB: "Not quite! ${activeQuizData.keyLesson}",
         rewardXp: 20,
       );
+
+      final String videoUrlPath = activeQuizData.assetPath;
+      
+      _videoController = VideoPlayerController.networkUrl(
+        Uri.parse(videoUrlPath),
+      );
+
+      await _videoController!.initialize();
+      await _videoController!.setVolume(1.0);
+      await _videoController!.setLooping(true);
+      await _videoController!.play();
+
+      setState(() {
+        _currentQuest = localQuest;
+        _isLoading = false;
+      });
 
       // 3. Initialize the native asset controller from the bundled path string
       final String videoPath = activeQuizData.assetPath;

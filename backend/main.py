@@ -21,7 +21,7 @@ origins = [
     "https://duitwise.vercel.app",  # Your development Vercel deployment link
     "http://localhost:55755",       # Keeping local development unblocked
     "http://localhost:8000",
-    "http://localhost:58403",
+    "http://localhost:49848",
     "http://127.0.0.1:8000",
 ]
 
