@@ -54,7 +54,7 @@ class FinancialLiteracyApp extends StatelessWidget {
     final currentSession = supabaseService.client.auth.currentSession;
 
     return MaterialApp(
-      title: 'Financial Literacy for Kids',
+      title: 'Duitwise | Financial Literacy for Kids',
       debugShowCheckedModeBanner: false,
       navigatorKey: globalNavigatorKey, // Registered globally to allow context-free modal injections
       theme: ThemeData(
