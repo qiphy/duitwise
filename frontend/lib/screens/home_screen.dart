@@ -358,10 +358,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                               height: 160,
                                               width: double.infinity,
                                               fit: BoxFit.cover,
-                                              errorBuilder: (c, e, s) => const Container(
+                                              errorBuilder: (c, e, s) => Container(
                                                 height: 60,
-                                                color: Color(0xFFF3F4F6),
-                                                child: Center(child: Text('⚠️ Image display failure')),
+                                                color: const Color(0xFFF3F4F6),
+                                                child: const Center(child: Text('⚠️ Image display failure')),
                                               ),
                                             ),
                                             Container(
