@@ -785,6 +785,7 @@ Future<void> _approveTaskAndDisburseFunds(String taskId, String childId, double 
 // 🛠️ RETAINED: Restored the signature parameter to accept your original AsyncSnapshot layout
 Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
     final profile = snapshot.data!.profile;
+    final wallet = snapshot.data!.wallet; // ✅ Extracted wallet object safely
     final bool isParent = profile.role == 'parent';
 
     return SingleChildScrollView(
@@ -822,12 +823,13 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
             // 📊 ADAPTIVE SPLIT ROW/COLUMN HEADER DESIGN
             LayoutBuilder(
               builder: (context, constraints) {
-                // Tipping breakpoint: if screen space is narrower than 500px, break to vertical column layout
-                bool useVerticalLayout = constraints.maxWidth < 500;
+                // Tipping breakpoint standard matching our responsive coin plan setup rules
+                bool useVerticalLayout = constraints.maxWidth < 600;
 
                 return Flex(
                   direction: useVerticalLayout ? Axis.vertical : Axis.horizontal,
                   crossAxisAlignment: useVerticalLayout ? CrossAxisAlignment.stretch : CrossAxisAlignment.center,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     // 1. Left Element: The Greetings Greeting Box Frame
                     _buildConditionalWrapper(
@@ -848,36 +850,21 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
                     // Sizing Gap Divider Context
                     if (useVerticalLayout) const SizedBox(height: 16) else const SizedBox(width: 16),
 
-                    // 2. Right Element: The Money Metric Bar / Balance Display Card
-                  _buildConditionalWrapper(
-                    isFlexed: !useVerticalLayout,
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF111827),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Total Balance', style: TextStyle(color: Colors.grey, fontSize: 13)),
-                          Text(
-                            // ✅ FIXED: Summing your three 70/20/10 rule data model buckets together dynamically
-                            'RM ${((snapshot.data!.wallet?.spendBalance ?? 0.0) + 
-                                   (snapshot.data!.wallet?.saveBalance ?? 0.0) + 
-                                   (snapshot.data!.wallet?.shareBalance ?? 0.0)).toStringAsFixed(2)}', 
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-                          ),
-                        ],
+                    // 2. Right Element: The Cleaned, Adaptive 70/20/10 Coin Plan Capsules Layout Row
+                    _buildConditionalWrapper(
+                      isFlexed: !useVerticalLayout,
+                      child: Align(
+                        alignment: useVerticalLayout ? Alignment.centerLeft : Alignment.centerRight,
+                        // ✅ LINKED CORRECTLY HERE: Replaces the manual Total Balance box with your fixed legend/capsule view
+                        child: _buildResponsiveCoinPlan(isNarrowScreen: useVerticalLayout, wallet: wallet),
                       ),
                     ),
-                  ),
                   ],
                 );
               },
             ),
             
-            const SizedBox(height: 24),
+            const SizedBox(height: 28),
             _buildLevelProgressCard(profile),
             const SizedBox(height: 24),
             _buildChildTasksSection(profile.id),
@@ -920,38 +907,45 @@ Widget _buildConditionalWrapper({required bool isFlexed, required Widget child})
     );
   }
 
-  // 📊 Sub-component: Responsive Money Plan Layout
+  // 📊 Sub-component: Responsive Money Plan Layout (With Legend Below Title) 
   Widget _buildResponsiveCoinPlan({required bool isNarrowScreen, required dynamic wallet}) {
-    final Widget legend = Row(
+    // 🏷️ Combined Header: Places the color legends cleanly directly beneath the main title text string
+    final Widget planHeader = Column(
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start, // Left-aligns both rows beautifully
       children: [
         const Text(
           'Your Money Plan 🎯',
-          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
         ),
-        const SizedBox(width: 6),
-        _buildTinyLegendDot(const Color(0xFF4ADE80), 'Save'),
-        const SizedBox(width: 4),
-        _buildTinyLegendDot(const Color(0xFF60A5FA), 'Spend'),
-        const SizedBox(width: 4),
-        _buildTinyLegendDot(const Color(0xFFF472B6), 'Share'),
+        const SizedBox(height: 6), // Vertical padding spacer context
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildTinyLegendDot(const Color(0xFF4ADE80), 'Save'),
+            const SizedBox(width: 6),
+            _buildTinyLegendDot(const Color(0xFF60A5FA), 'Spend'),
+            const SizedBox(width: 6),
+            _buildTinyLegendDot(const Color(0xFFF472B6), 'Share'),
+          ],
+        ),
       ],
     );
 
-  final Widget coinBar = InkWell(
+    // 🪙 The Clickable Coin Segment Capsules Row
+    final Widget coinBar = InkWell(
       borderRadius: BorderRadius.circular(12),
-      // ⚡ TAP ACTION LINKAGE: Launch your high-fidelity educational sheet context when clicked
       onTap: () => showSmartMoneyPlanBottomSheet(context, wallet, () {
-              _refreshData(); // Updates the home screen coins balance state immediately
-            }),
+        _refreshData(); 
+      }),
       child: Container(
-        padding: const EdgeInsets.all(4),
+        padding: const EdgeInsets.all(5),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.03),
+              color: Colors.black.withValues(alpha: 0.03),
               blurRadius: 4,
               offset: const Offset(0, 2),
             ),
@@ -968,23 +962,26 @@ Widget _buildConditionalWrapper({required bool isFlexed, required Widget child})
       ),
     );
 
+    // 📱 DYNAMIC LAYOUT ENGINE RETURN CHANNELS
     if (isNarrowScreen) {
+      // On mobile viewports: Stack the text/legend header vertically directly on top of the capsule bar
       return Column(
         mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          legend,
-          const SizedBox(height: 6),
+          planHeader,
+          const SizedBox(height: 12),
           coinBar,
         ],
       );
     } else {
+      // On wide desktop/web viewports: Place the text/legend layout side-by-side with the capsule bar
       return Row(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          legend,
-          const SizedBox(width: 12),
+          planHeader,
+          const SizedBox(width: 20), // Generous horizontal spacing gap separator
           coinBar,
         ],
       );
