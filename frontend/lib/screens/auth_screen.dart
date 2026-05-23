@@ -46,28 +46,30 @@ class _AuthScreenState extends State<AuthScreen> {
     if (_isLoginMode) {
       setState(() => _isLoading = true);
       try {
-        final response = await supabaseService.client.auth.signInWithPassword(
-          email: _emailController.text.trim(),
-          password: _passwordController.text.trim(),
+        // ✅ FIXED: Routes explicitly via your custom FastAPI HTTP tunnel
+        final success = await supabaseService.loginWithFastAPI(
+          _emailController.text.trim(),
+          _passwordController.text.trim(),
         );
         
-        if (response.user != null) {
+        if (success && supabaseService.currentUserId != null) {
           // Verify if child approval gate condition is fully satisfied
           final profileCheck = await supabaseService.client
               .from('profiles')
               .select('role, is_approved')
-              .eq('id', response.user!.id)
+              .eq('id', supabaseService.currentUserId!)
               .maybeSingle();
 
           if (profileCheck != null && profileCheck['role'] == 'child' && !(profileCheck['is_approved'] ?? false)) {
-            await supabaseService.client.auth.signOut();
+            // Reset internal memory token parameters on layout barrier mismatch
+            supabaseService.clearSession();
             if (mounted) _showWaitingForApprovalDialog();
             return;
           }
           _navigateToDashboard();
         }
       } catch (e) {
-        _showSnackBar('Login Failed: ${e.toString()}');
+        _showSnackBar('Login Failed: ${e.toString().replaceAll('Exception: ', '')}');
       } finally {
         setState(() => _isLoading = false);
       }
@@ -197,32 +199,31 @@ class _AuthScreenState extends State<AuthScreen> {
     }
 
     return Scaffold(
-          backgroundColor: const Color(0xFFF5F6FA),
-          body: SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(28.0),
-                child: currentFormBody,
-              ),
+      backgroundColor: const Color(0xFFF5F6FA),
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(28.0),
+            child: currentFormBody,
+          ),
+        ),
+      ),
+      persistentFooterAlignment: AlignmentDirectional.center,
+      persistentFooterButtons: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
+          child: Text(
+            'Disclaimer: DuitWise is an educational simulation tool designed to promote financial literacy among youth. It does not provide real-world financial advice, banking services, or licensed investment management.',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 11,
+              color: Colors.black,
+              height: 1.4,
             ),
           ),
-          // ➡️ ADD THESE TWO LINES HERE:
-          persistentFooterAlignment: AlignmentDirectional.center,
-          persistentFooterButtons: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
-              child: Text(
-                'Disclaimer: DuitWise is an educational simulation tool designed to promote financial literacy among youth. It does not provide real-world financial advice, banking services, or licensed investment management.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Colors.black,
-                  height: 1.4,
-                ),
-              ),
-            ),
-          ],
-        );
+        ),
+      ],
+    );
   }
 
   // --- UI Form Frameworks ---
