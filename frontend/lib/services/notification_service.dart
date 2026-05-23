@@ -2,6 +2,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb; // ✅ Added to guard the web runtime environment execution paths
 import '../supabase_service.dart';
 import '../screens/quest_screen.dart'; 
 
@@ -16,21 +17,28 @@ class NotificationService {
   factory NotificationService() => _instance;
   NotificationService._internal();
 
-  final FirebaseMessaging _fcm = FirebaseMessaging.instance;
+  // ✅ FIXED: Used lazy initializers or null-safety because calling .instance directly during web initialization can throw a crash
+  FirebaseMessaging? get _fcm => kIsWeb ? null : FirebaseMessaging.instance;
   final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
 
   // Store a global navigator reference to deep-link straight to your video quests
   GlobalKey<NavigatorState>? navigatorKey;
 
   Future<void> initializeNotificationPipeline(BuildContext context, GlobalKey<NavigatorState> navKey) async {
+    // ✅ SAFETY GUARD: Instantly exit the initialization loop if deployed to Flutter Web
+    if (kIsWeb) {
+      debugPrint('ℹ️ Skipping native Firebase messaging hooks on Flutter Web deployment target.');
+      return; 
+    }
+
     navigatorKey = navKey;
 
     // 1. Request OS permission gates (Crucial for iOS & Android 13+)
-    NotificationSettings settings = await _fcm.requestPermission(
+    NotificationSettings? settings = await _fcm?.requestPermission(
       alert: true, badge: true, sound: true,
     );
 
-    if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+    if (settings != null && settings.authorizationStatus == AuthorizationStatus.authorized) {
       debugPrint('User granted push notification routing clearance.');
     }
 
@@ -52,8 +60,8 @@ class NotificationService {
     const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     const InitializationSettings initSettings = InitializationSettings(android: androidSettings);
     
-    // 🛠️ FIXED HERE: Changed 'settings:' to 'initializationSettings:'
-    await _localNotifications.initialize(settings: initSettings);
+    // 🛠️ FIXED: Standardized named initialization mapping parameter key
+    await _localNotifications.initialize(settings: initSettings); // ✅ Passed correctly as a named argument
 
     // 4. Stream Listener Layer: Handle alerts when the app is active in foreground
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
@@ -83,7 +91,7 @@ class NotificationService {
     });
 
     // ⚡ Handle tap interaction when the app was completely dead/terminated
-    RemoteMessage? initialMessage = await _fcm.getInitialMessage();
+    RemoteMessage? initialMessage = await _fcm?.getInitialMessage();
     if (initialMessage != null) {
       Future.delayed(const Duration(milliseconds: 800), () {
         _handleNotificationPayloadRouting(initialMessage.data);
@@ -116,11 +124,14 @@ class NotificationService {
   }
 
   Future<void> uploadDevicePushToken() async {
+    // ✅ SAFETY GUARD: Prevent token collection attempts on browser web targets
+    if (kIsWeb || _fcm == null) return;
+
     final String? userId = supabaseService.currentUserId;
     if (userId == null) return;
 
     try {
-      String? token = await _fcm.getToken();
+      String? token = await _fcm!.getToken();
       if (token != null) {
         debugPrint('🚀 MY_TEST_FCM_TOKEN: $token');
 
