@@ -228,7 +228,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
 // --- Enhanced Parent Control Sheet: Task Validation & Household Disconnection ---
-void _showParentTaskManagerBottomSheet(String childName, String childId) {
+  void _showParentTaskManagerBottomSheet(String childName, String childId) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -252,7 +252,7 @@ void _showParentTaskManagerBottomSheet(String childName, String childId) {
                       future: supabaseService.client
                           .from('tasks')
                           .select('id, title, reward_amount, status, proof_url, assigned_at')
-                          .eq('child_id', childId) // 🛠️ FIX: Standardized column join target metric reference
+                          .eq('profile_id', childId) // 🛠️ FIXED: Standardized target column matching child query layout rules
                           .order('id', ascending: false),
                       builder: (context, taskSnapshot) {
                         if (taskSnapshot.connectionState == ConnectionState.waiting) {
@@ -275,8 +275,7 @@ void _showParentTaskManagerBottomSheet(String childName, String childId) {
                           physics: const BouncingScrollPhysics(),
                           itemBuilder: (context, idx) {
                             final t = tasks[idx];
-                            // 🛠️ TYPE FIX: Cast dynamic id fields safely to integers matching your schema
-                            final String taskId = (t['id'] as num).toString();
+                            final String taskId = t['id'].toString();
                             final String title = t['title'] ?? 'Secret Mission';
                             final double reward = (t['reward_amount'] ?? 0.0).toDouble();
                             final String status = t['status'] ?? 'assigned';
@@ -288,7 +287,6 @@ void _showParentTaskManagerBottomSheet(String childName, String childId) {
 
                             final bool isPending = status == 'pending';
 
-                            // 🛠️ SYNTAX FIX: Cleared duplicate iteration blocks down to a single clean return sequence
                             return Container(
                               margin: const EdgeInsets.only(bottom: 12),
                               padding: const EdgeInsets.all(16),
@@ -343,21 +341,43 @@ void _showParentTaskManagerBottomSheet(String childName, String childId) {
                                     ],
                                   ),
                                   
-                                  // Proof Content Frame Injection (Only if proof exists)
+                                  // 📷 PHOTO PROOF ELEMENT: Injected directly for validation visibility
                                   if (proofUrl != null && proofUrl.isNotEmpty) ...[
                                     const SizedBox(height: 12),
-                                    const Text('Photo Verification Sent:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey)),
+                                    const Text('Task Completion Proof:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF4B5563))),
                                     const SizedBox(height: 6),
                                     ClipRRect(
                                       borderRadius: BorderRadius.circular(12),
                                       child: GestureDetector(
                                         onTap: () => _showFullImagePreview(proofUrl),
-                                        child: Image.network(
-                                          proofUrl,
-                                          height: 120,
-                                          width: double.infinity,
-                                          fit: BoxFit.cover,
-                                          errorBuilder: (c, e, s) => const Text('⚠️ Image display failure'),
+                                        child: Stack(
+                                          alignment: Alignment.bottomRight,
+                                          children: [
+                                            Image.network(
+                                              proofUrl,
+                                              height: 160,
+                                              width: double.infinity,
+                                              fit: BoxFit.cover,
+                                              errorBuilder: (c, e, s) => const Container(
+                                                height: 60,
+                                                color: Color(0xFFF3F4F6),
+                                                child: Center(child: Text('⚠️ Image display failure')),
+                                              ),
+                                            ),
+                                            Container(
+                                              margin: const EdgeInsets.all(8),
+                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                              decoration: BoxDecoration(color: Colors.black.withOpacity(0.6), borderRadius: BorderRadius.circular(6)),
+                                              child: const Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Icon(Icons.fullscreen_rounded, color: Colors.white, size: 14),
+                                                  SizedBox(width: 2),
+                                                  Text('Zoom', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                                ],
+                                              ),
+                                            )
+                                          ],
                                         ),
                                       ),
                                     ),
@@ -365,7 +385,7 @@ void _showParentTaskManagerBottomSheet(String childName, String childId) {
 
                                   const SizedBox(height: 12),
 
-                                  // Bottom Action Row: Status Chip and Pay Action
+                                  // Bottom Action Row: Status Chip and Dynamic Parent Decision Buttons
                                   Row(
                                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                     children: [
@@ -375,19 +395,36 @@ void _showParentTaskManagerBottomSheet(String childName, String childId) {
                                         side: BorderSide.none,
                                       ),
                                       if (isPending)
-                                        ElevatedButton.icon(
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: const Color(0xFF16A34A),
-                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                            elevation: 0,
-                                          ),
-                                          icon: const Icon(Icons.check_circle, size: 16, color: Colors.white),
-                                          label: const Text('Approve & Pay', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                                          onPressed: () async {
-                                            await _approveTaskAndDisburseFunds(taskId, childId, reward, title);
-                                            setModalState(() {}); 
-                                            _refreshData();       
-                                          },
+                                        Row(
+                                          children: [
+                                            // ❌ REJECT TEXT ACTUATOR ACTION BUTTON
+                                            TextButton.icon(
+                                              style: TextButton.styleFrom(foregroundColor: Colors.red[600]),
+                                              icon: const Icon(Icons.cancel_outlined, size: 16),
+                                              label: const Text('Reject', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                              onPressed: () async {
+                                                await _rejectTaskProof(taskId, title);
+                                                setModalState(() {});
+                                                _refreshData();
+                                              },
+                                            ),
+                                            const SizedBox(width: 8),
+                                            // ✅ APPROVE & DISBURSE DISPATCH BUTTON
+                                            ElevatedButton.icon(
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor: const Color(0xFF16A34A),
+                                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                                elevation: 0,
+                                              ),
+                                              icon: const Icon(Icons.check_circle, size: 16, color: Colors.white),
+                                              label: const Text('Approve & Pay', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                                              onPressed: () async {
+                                                await _approveTaskAndDisburseFunds(taskId, childId, reward, title);
+                                                setModalState(() {}); 
+                                                _refreshData();       
+                                              },
+                                            ),
+                                          ],
                                         ),
                                     ],
                                   )
@@ -402,7 +439,7 @@ void _showParentTaskManagerBottomSheet(String childName, String childId) {
                   
                   const SizedBox(height: 16),
                   
-                  // BOTTOM ACTION ROW: Action Controllers Footer Frame
+                  // BOTTOM ACTION ROW: Household controllers
                   Row(
                     children: [
                       Expanded(
@@ -474,6 +511,31 @@ void _showParentTaskManagerBottomSheet(String childName, String childId) {
         ),
       ),
     );
+  }
+
+  // ❌ Reverts a pending task back to uncompleted assigned state, clearing out the bad file reference URL
+  Future<void> _rejectTaskProof(String taskId, String taskTitle) async {
+    try {
+      await supabaseService.client
+          .from('tasks')
+          .update({
+            'status': 'assigned',
+            'proof_url': null, // Completely flushes out the file URL path
+          })
+          .eq('id', taskId);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Proof rejected for "$taskTitle". Reset to assigned.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Rejection failed: $e'), backgroundColor: Colors.redAccent),
+        );
+      }
+    }
   }
 
   // --- Core Wallet Balance Settler Transaction Logic ---
