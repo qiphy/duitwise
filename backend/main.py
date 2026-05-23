@@ -15,12 +15,20 @@ app = FastAPI(
 )
 
 # --- Add CORS Middleware Configuration ---
+origins = [
+    "https://duitwise.app",
+    "https://www.duitwise.app",
+    "https://duitwise.vercel.app",  # Your development Vercel deployment link
+    "http://localhost:55755",       # Keeping local development unblocked
+    "http://localhost:8000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://duitwise.vercel.app"],
+    allow_origins=origins,          # ✅ Allows your production frontend to communicate with Render
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],            # Allows all HTTP verbs (GET, POST, PUT, DELETE, etc.)
+    allow_headers=["*"],            # Allows all network transmission headers
 )
 
 # --- Pydantic Schemas for Validation ---
