@@ -4,7 +4,7 @@ import 'supabase_service.dart';
 import 'screens/splash_screen.dart';
 import 'firebase_options.dart'; 
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 // 🎯 The single source of truth for global app routing and modal overlays
 final GlobalKey<NavigatorState> globalNavigatorKey = GlobalKey<NavigatorState>();
