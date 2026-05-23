@@ -4,6 +4,7 @@ import 'supabase_service.dart';
 import 'screens/splash_screen.dart';
 import 'firebase_options.dart'; 
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 
 // 🎯 The single source of truth for global app routing and modal overlays
 final GlobalKey<NavigatorState> globalNavigatorKey = GlobalKey<NavigatorState>();
@@ -12,20 +13,35 @@ void main() async {
   // Initialize internal hardware framework hook mechanisms securely
   WidgetsFlutterBinding.ensureInitialized();
   
-  // ⚡ Initialize Firebase Cloud Messaging core native background bindings
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-  
-  // Initialize Supabase core connection vectors safely
-  await supabaseService.initialize();
+  // 🌐 WEB TARGET ROUTING LOGIC BLOCK
+  if (kIsWeb) {
+    debugPrint('🌐 Production Web Target Detected: Bypassing mobile push core initialization pipelines.');
+    
+    // Initialize Supabase core connection vectors safely for web client
+    await supabaseService.initialize();
+    
+  } 
+  // 📱 NATIVE MOBILE TARGET ROUTING LOGIC BLOCK
+  else {
+    debugPrint('📱 Native Mobile Target Detected: Initializing hardware push registries.');
+    
+    // ⚡ Initialize Firebase Cloud Messaging core native background bindings
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    
+    // Initialize Supabase core connection vectors safely
+    await supabaseService.initialize();
 
-  // 🛠️ FIX: Removed the dead parameterless notification initialization from here.
-  // The pipeline is now triggered cleanly inside HomeScreen's lifecycle.
-
-  final rawToken = await FirebaseMessaging.instance.getToken();
-  debugPrint('🚨 EARLY BOOT TOKEN CHECK: $rawToken');
+    try {
+      final rawToken = await FirebaseMessaging.instance.getToken();
+      debugPrint('🚨 EARLY BOOT TOKEN CHECK: $rawToken');
+    } catch (e) {
+      debugPrint('Error running early mobile token verification script: $e');
+    }
+  }
   
+  // Launch the core layout context cleanly
   runApp(const FinancialLiteracyApp());
 }
 
