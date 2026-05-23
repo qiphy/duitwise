@@ -40,21 +40,21 @@ class VideoQuizModel {
 // 📋 Global static listing of your precise data payloads
 final List<VideoQuizModel> eduVideosList = [
   VideoQuizModel(
-    assetPath: 'assets/Saving Video.mp4',
+    assetPath: 'assets/saving_video.mp4',
     question: 'What helped the tiger cub get closer to buying the toy rocket ship?',
     options: ['Wishing on a star.', 'Putting a coin into his spaceship bank every time.'],
     correctIndex: 1,
     keyLesson: 'When you save a little bit at a time, your money grows until you reach your goal!',
   ),
   VideoQuizModel(
-    assetPath: 'assets/Needs Video.mp4',
+    assetPath: 'assets/needs_video.mp4',
     question: 'Why did the fox skip buying the shiny balloon?',
     options: ['He didn\'t have enough coins.', 'He wanted to save his coins for the train ride.'],
     correctIndex: 1,
     keyLesson: 'Wants are fun to have, but it is smart to take care of our important plans first!',
   ),
   VideoQuizModel(
-    assetPath: 'assets/Account Video.mp4',
+    assetPath: 'assets/account_video.mp4',
     question: 'What does it mean when the gold coin "sprouted" and grew into more coins inside the bank?',
     options: ['The bank added extra money called "interest" as a reward.', 'The soil in the pot was magical.'],
     correctIndex: 0,
