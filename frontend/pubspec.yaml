@@ -37,7 +37,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/logo.png
-    - assets/Saving Video.mp4
-    - assets/Needs Video.mp4
-    - assets/Account Video.mp4
-    - assets/Intro Video.mp4
+    - assets/saving_video.mp4
+    - assets/needs_video.mp4
+    - assets/account_video.mp4
+    - assets/intro_video.mp4
