@@ -26,7 +26,8 @@ class _OnboardingWelcomeScreenState extends State<OnboardingWelcomeScreen> {
   void initState() {
     super.initState();
     // ✅ FIXED: Asset path string corrected to match your exact filename
-    _introController = VideoPlayerController.asset('assets/Intro Video.mp4')
+    _introController = VideoPlayerController.asset('Intro Video.mp4')
+      ..setVolume(0.0)
       ..initialize().then((_) {
         if (mounted) {
           setState(() => _isVideoInitialized = true);
@@ -80,54 +81,72 @@ class _OnboardingWelcomeScreenState extends State<OnboardingWelcomeScreen> {
               ),
               const SizedBox(height: 24),
 
-              // 🎞️ APP INTRODUCTION VIDEO LAYER COMPONENT
-              Container(
-                height: 220,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF312E81),
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(24),
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      if (_isVideoInitialized)
-                        Positioned.fill(
-                          child: FittedBox(
-                            fit: BoxFit.cover,
-                            child: SizedBox(
-                              width: _introController!.value.size.width,
-                              height: _introController!.value.size.height,
-                              child: VideoPlayer(_introController!),
-                            ),
-                          ),
+              // 🎞️ APP INTRODUCTION VIDEO LAYER COMPONENT (FIXED: Dynamic aspect-ratio driven framing)
+// 🎞️ APP INTRODUCTION VIDEO LAYER COMPONENT (FIXED: Bounded 40% adaptive screen width scaling)
+              Center(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    // Automatically uses 40% of available screen width on large desktop screens, scaling wider on mobile
+                    double optimizedWidth = constraints.maxWidth > 600 
+                        ? constraints.maxWidth * 0.40 
+                        : constraints.maxWidth * 0.90;
+
+                    return SizedBox(
+                      width: optimizedWidth,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF312E81),
+                          borderRadius: BorderRadius.circular(24),
                         ),
-                      
-                      // Playback Action Custom Overlays
-                      GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _introController!.value.isPlaying 
-                                ? _introController!.pause() 
-                                : _introController!.play();
-                          });
-                        },
-                        child: CircleAvatar(
-                          radius: 28,
-                          // ✅ FIXED: Substituted deprecated withOpacity with explicit withValues alpha masks
-                          backgroundColor: Colors.white.withValues(alpha: 0.9),
-                          child: Icon(
-                            _introController != null && _introController!.value.isPlaying 
-                                ? Icons.pause_rounded 
-                                : Icons.play_arrow_rounded,
-                            color: const Color(0xFF6366F1), 
-                            size: 32
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(24),
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 300),
+                            child: _isVideoInitialized
+                                ? AspectRatio(
+                                    // Dynamically locks structural proportions to the file's native aspect ratio
+                                    aspectRatio: _introController!.value.aspectRatio,
+                                    child: Stack(
+                                      alignment: Alignment.center,
+                                      children: [
+                                        VideoPlayer(_introController!),
+                                        
+                                        // Playback Action Custom Overlays
+                                        GestureDetector(
+                                          onTap: () {
+                                            setState(() {
+                                              _introController!.value.isPlaying 
+                                                  ? _introController!.pause() 
+                                                  : _introController!.play();
+                                            });
+                                          },
+                                          child: CircleAvatar(
+                                            radius: 24, // Slightly scaled down icon ring for smaller frame hygiene
+                                            backgroundColor: Colors.white.withValues(alpha: 0.9),
+                                            child: Icon(
+                                              _introController!.value.isPlaying 
+                                                  ? Icons.pause_rounded 
+                                                  : Icons.play_arrow_rounded,
+                                              color: const Color(0xFF6366F1), 
+                                              size: 28,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  )
+                                : SizedBox(
+                                    // Maintains strict scaling proportions during asset boot load transitions
+                                    height: optimizedWidth * (9 / 16), 
+                                    child: const Center(
+                                      child: CircularProgressIndicator(color: Colors.white),
+                                    ),
+                                  ),
                           ),
                         ),
                       ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
               ),
               const SizedBox(height: 12),
