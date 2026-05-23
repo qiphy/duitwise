@@ -820,22 +820,29 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
 
           // --- CHILD SPECIFIC ROOT CONTENT PANELS ---
           if (!isParent) ...[
-            // 📊 ADAPTIVE SPLIT ROW/COLUMN HEADER DESIGN
+            // 📊 FIXED ADAPTIVE HEADER PIPELINE
             LayoutBuilder(
               builder: (context, constraints) {
-                // Tipping breakpoint standard matching our responsive coin plan setup rules
-                bool useVerticalLayout = constraints.maxWidth < 600;
+                // Evaluates if the single container card width drops below desktop standard limits
+                bool isNarrow = constraints.maxWidth < 650;
 
-                return Flex(
-                  direction: useVerticalLayout ? Axis.vertical : Axis.horizontal,
-                  crossAxisAlignment: useVerticalLayout ? CrossAxisAlignment.stretch : CrossAxisAlignment.center,
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                return Wrap(
+                  direction: Axis.horizontal,
+                  alignment: WrapAlignment.spaceBetween, // Pushes elements to opposite edges on desktop
+                  runAlignment: WrapAlignment.start,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 24, // Clear horizontal gap spacing buffer between components
+                  runSpacing: 16, // Clean vertical line gap padding if items wrap below
                   children: [
-                    // 1. Left Element: The Greetings Greeting Box Frame
-                    _buildConditionalWrapper(
-                      isFlexed: !useVerticalLayout,
+                    // 1. Left Layout Section: The Profile Greetings Block
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        // Restricts greeting card text width to leave breathing room for the coin bar
+                        maxWidth: isNarrow ? constraints.maxWidth : constraints.maxWidth * 0.45,
+                      ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
                             'Hi, ${profile.username}! 👋', 
@@ -847,24 +854,19 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
                       ),
                     ),
 
-                    // Sizing Gap Divider Context
-                    if (useVerticalLayout) const SizedBox(height: 16) else const SizedBox(width: 16),
-
-                    // 2. Right Element: The Cleaned, Adaptive 70/20/10 Coin Plan Capsules Layout Row
-                    _buildConditionalWrapper(
-                      isFlexed: !useVerticalLayout,
-                      child: Align(
-                        alignment: useVerticalLayout ? Alignment.centerLeft : Alignment.centerRight,
-                        // ✅ LINKED CORRECTLY HERE: Replaces the manual Total Balance box with your fixed legend/capsule view
-                        child: _buildResponsiveCoinPlan(isNarrowScreen: useVerticalLayout, wallet: wallet),
+                    // 2. Right Layout Section: Your Fixed 70/20/10 Interactive Plan Widget
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: isNarrow ? constraints.maxWidth : constraints.maxWidth * 0.5,
                       ),
+                      child: _buildResponsiveCoinPlan(isNarrowScreen: isNarrow, wallet: wallet),
                     ),
                   ],
                 );
               },
             ),
             
-            const SizedBox(height: 28),
+            const SizedBox(height: 32),
             _buildLevelProgressCard(profile),
             const SizedBox(height: 24),
             _buildChildTasksSection(profile.id),
