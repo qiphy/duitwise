@@ -1260,7 +1260,7 @@ Widget _buildConditionalWrapper({required bool isFlexed, required Widget child})
   }
 
   // 📊 Sub-component: Responsive Money Plan Layout (With Legend Below Title) 
-  Widget _buildResponsiveCoinPlan({required bool isNarrowScreen, required dynamic wallet}) {
+Widget _buildResponsiveCoinPlan({required bool isNarrowScreen, required dynamic wallet}) {
     // 🪙 Calculate total combined capital dynamically from the distinct buckets
     final double totalBalance = (wallet.spendBalance ?? 0.0) + 
                                 (wallet.saveBalance ?? 0.0) + 
@@ -1324,13 +1324,51 @@ Widget _buildConditionalWrapper({required bool isFlexed, required Widget child})
       ),
     );
 
+    // ➕ New Transaction Action Button for the Child
+final Widget addTransactionButton = ElevatedButton.icon(
+      onPressed: () {
+        // ✅ Replaced with a concrete, inline native stub until you build your custom layout sheet
+        showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          builder: (context) => Container(
+            height: MediaQuery.of(context).size.height * 0.6,
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: const Center(child: Text("Coming Soon! 🇲🇾")),
+          ),
+        ).then((_) => _refreshData()); // Triggers your state lifecycle sync upon close
+      },
+      icon: const Icon(Icons.add_rounded, size: 16, color: Colors.white),
+      label: const Text(
+        'Pay Using QR',
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+      ),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: const Color(0xFF1F2937),
+        elevation: 0,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+
     // 📱 DYNAMIC LAYOUT ENGINE RETURN CHANNELS
     if (isNarrowScreen) {
       return Column(
-        mainAxisSize: MainAxisSize.min, // ✅ CRITICAL: Enforces strict layout height boundaries on mobile viewports
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          planHeader,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween, // ✅ Fixed enum property from 'between' to 'spaceBetween'
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              planHeader,
+              addTransactionButton,
+            ],
+          ),
           const SizedBox(height: 12),
           coinBar,
         ],
@@ -1343,6 +1381,8 @@ Widget _buildConditionalWrapper({required bool isFlexed, required Widget child})
           planHeader,
           const SizedBox(width: 24), 
           coinBar,
+          const SizedBox(width: 16),
+          addTransactionButton, // appends cleanly to the end of the alignment layout line on desktop displays
         ],
       );
     }
