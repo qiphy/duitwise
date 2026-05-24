@@ -13,6 +13,7 @@ import 'onboarding_screen.dart';
 import '../services/notification_service.dart';
 import 'transaction_history_screen.dart';
 import 'money_report_screen.dart';
+import 'package:video_player/video_player.dart';
 
 // --- Local Dashboard Data Composition Wrapper ---
 class DashboardData {
@@ -564,45 +565,68 @@ Future<void> _approveTaskAndDisburseFunds(String taskId, String childId, double 
         params: {'user_id': childId}
       );
 
-      // 3. FETCH current wallet row metrics DIRECTLY from your Supabase database table
+      // 3. FETCH current wallet values directly from your table
       final List<dynamic> walletRecords = await supabaseService.client
           .from('wallets')
-          .select('save_balance, spend_balance, share_balance')
+          .select('total_balance, save_balance, spend_balance, share_balance')
           .eq('profile_id', childId);
 
+      // 🧮 FORMULAIC SPLIT ENGINE (70 / 20 / 10)
+      final double saveIncrement = amount * 0.70;
+      final double spendIncrement = amount * 0.20;
+      final double shareIncrement = amount * 0.10;
+
       if (walletRecords.isNotEmpty) {
+        // --- CASE A: WALLET EXISTS -> UPDATE BALANCES ---
         final currentWallet = walletRecords.first;
         
-        // 🌟 CRITICAL TYPE FIX: Parse the incoming Postgres numeric string fields safely into real doubles
+        final double currentTotal = currentWallet['total_balance'] != null 
+            ? double.parse(currentWallet['total_balance'].toString()) 
+            : 0.0;
+        final double currentSave = currentWallet['save_balance'] != null 
+            ? double.parse(currentWallet['save_balance'].toString()) 
+            : 0.0;
         final double currentSpend = currentWallet['spend_balance'] != null 
             ? double.parse(currentWallet['spend_balance'].toString()) 
             : 0.0;
-            
-        final double updatedSpend = currentSpend + amount;
+        final double currentShare = currentWallet['share_balance'] != null 
+            ? double.parse(currentWallet['share_balance'].toString()) 
+            : 0.0;
 
-        // 4. UPDATE the wallet balance database table rows directly using the clean column keys
         await supabaseService.client
             .from('wallets')
             .update({
-              'spend_balance': updatedSpend, 
+              'total_balance': currentTotal + amount,
+              'save_balance': currentSave + saveIncrement,
+              'spend_balance': currentSpend + spendIncrement,
+              'share_balance': currentShare + shareIncrement,
             })
             .eq('profile_id', childId);
-
-        // 5. Log the transaction ledger history row directly into Supabase
-        await supabaseService.client.from('transactions').insert({
-          'profile_id': childId,
-          'title': taskTitle,
-          'amount': amount, 
-          'category': 'Task',
-        });
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Payout completed for "$taskTitle"! Spend balance updated in database. 🪙')),
-          );
-        }
       } else {
-        throw Exception('No direct wallet profile record matched for child ID: $childId');
+        // --- CASE B: FIRST TIME WALLET USER -> INSERT FRESH RECORD ---
+        await supabaseService.client
+            .from('wallets')
+            .insert({
+              'profile_id': childId,
+              'total_balance': amount,
+              'save_balance': saveIncrement,
+              'spend_balance': spendIncrement,
+              'share_balance': shareIncrement,
+            });
+      }
+
+      // 4. Log transaction audit trail history
+      await supabaseService.client.from('transactions').insert({
+        'profile_id': childId,
+        'title': taskTitle,
+        'amount': amount, 
+        'category': 'Task',
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Payout disbursed! RM ${amount.toStringAsFixed(2)} split across child buckets.')),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -1073,7 +1097,12 @@ Widget _buildConditionalWrapper({required bool isFlexed, required Widget child})
 
 // 🛠️ FIX: Added 'VoidCallback onFinish' signature to match the dashboard call route parameters
 void showSmartMoneyPlanBottomSheet(BuildContext context, WalletModel wallet, VoidCallback onFinish) {
-  final double totalCoins = (wallet.saveBalance ?? 0.0) + (wallet.spendBalance ?? 0.0) + (wallet.shareBalance ?? 0.0);
+  // 🧮 Calculate portions dynamically from total_balance metric
+  final double totalCoins = wallet.totalBalance ?? 
+      ((wallet.saveBalance ?? 0.0) + (wallet.spendBalance ?? 0.0) + (wallet.shareBalance ?? 0.0));
+
+  VideoPlayerController? modalVideoController;
+  bool isModalVideoInitialized = false;
 
   showModalBottomSheet(
     context: context,
@@ -1082,193 +1111,226 @@ void showSmartMoneyPlanBottomSheet(BuildContext context, WalletModel wallet, Voi
     enableDrag: false,
     backgroundColor: Colors.transparent, 
     builder: (context) {
-      return Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-        ),
-        padding: const EdgeInsets.only(top: 16, left: 24, right: 24, bottom: 24),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(context).size.height * 0.85,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min, 
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Top Header Drag Notch
-              Center(
-                child: Container(
-                  width: 40, height: 5,
-                  decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)),
-                ),
-              ),
-              const SizedBox(height: 16),
+      // 🛠️ WRAPPER: Wrapped the core container inside a StatefulBuilder to refresh the video viewport natively
+      return StatefulBuilder(
+        builder: (BuildContext context, StateSetter setModalState) {
+          // Lazy-init the video controller instance on first build pipeline
+          if (modalVideoController == null) {
+            modalVideoController = VideoPlayerController.networkUrl(
+                Uri.parse('https://tbrefzeytkflqyadayvs.supabase.co/storage/v1/object/public/quest-videos/finance_video.mp4'),
+            )
+              ..setVolume(0.0)
+              ..initialize().then((_) {
+                setModalState(() => isModalVideoInitialized = true);
+              });
 
-              // Sticky Non-Scrolling Header Block Component
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            modalVideoController!.addListener(() {
+              setModalState(() {});
+            });
+          }
+
+          return Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+            ),
+            padding: const EdgeInsets.only(top: 16, left: 24, right: 24, bottom: 24),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.85,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min, 
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Expanded(
-                    child: Row(
-                      children: [
-                        Text('✨', style: TextStyle(fontSize: 20)),
-                        SizedBox(width: 8),
-                        Text(
-                          'Learn the Smart Money Plan! 🎯',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
-                        ),
-                      ],
+                  // Top Header Drag Notch
+                  Center(
+                    child: Container(
+                      width: 40, height: 5,
+                      decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)),
                     ),
                   ),
-                  IconButton(
-                    icon: Icon(Icons.close_rounded, color: Colors.grey[400]),
-                    onPressed: () => Navigator.pop(context),
-                  )
-                ],
-              ),
-              const Text(
-                'Watch this quick video to become a money master! 🚀',
-                style: TextStyle(fontSize: 13, color: Color(0xFF6B7280), fontWeight: FontWeight.w500),
-              ),
-              const SizedBox(height: 16),
+                  const SizedBox(height: 16),
 
-              // 📜 SCROLLABLE BODY VIEWPORT
-              Expanded(
-                child: SingleChildScrollView(
-                  physics: const BouncingScrollPhysics(), 
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                  // Sticky Non-Scrolling Header Block Component
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      // Video Container Frame
-                      Container(
-                        height: 200,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(24),
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF6366F1), Color(0xFF4F46E5)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                        ),
-                        child: Stack(
-                          alignment: Alignment.center,
+                      const Expanded(
+                        child: Row(
                           children: [
-                            Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Text(
-                                  '70% Save · 20% Spend · 10% Share',
-                                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'The Smart Money Plan video narrative loop',
-                                  style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 11),
-                                ),
-                              ],
-                            ),
-                            const CircleAvatar(
-                              radius: 30,
-                              backgroundColor: Colors.white,
-                              child: Icon(Icons.play_arrow_rounded, color: Color(0xFF4F46E5), size: 36),
+                            Text('✨', style: TextStyle(fontSize: 20)),
+                            SizedBox(width: 8),
+                            Text(
+                              'Learn the Smart Money Plan! 🎯',
+                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
                             ),
                           ],
                         ),
                       ),
-                      const SizedBox(height: 24),
-
-                      const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text('🎓', style: TextStyle(fontSize: 16)),
-                          SizedBox(width: 6),
-                          Text(
-                            'The Smart Money Rule',
-                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-
-                      // 🟢 SAVE TARGET SEGMENT ROW
-                      _buildAllocationCard(
-                        liveValue: wallet.saveBalance.toStringAsFixed(2),
-                        title: '💚 Save 70% - Be Smart!',
-                        subtitle: 'Put 70% of your money into savings for your big dreams like that gaming console or bicycle! This helps you reach your goals faster! 🎯',
-                        icon: '🐷',
-                        themeColor: const Color(0xFFDCFCE7),
-                        textColor: const Color(0xFF15803D),
-                        borderColor: const Color(0xFFBBF7D0),
-                      ),
-                      const SizedBox(height: 12),
-
-                      // 🔵 SPEND TARGET SEGMENT ROW
-                      _buildAllocationCard(
-                        liveValue: wallet.spendBalance.toStringAsFixed(2),
-                        title: '💙 Spend 20% - Have Fun!',
-                        subtitle: 'Use 20% for fun stuff you want right now! Snacks, games, or treats - enjoy the rewards of your hard work! 🎉',
-                        icon: '🛍️',
-                        themeColor: const Color(0xFFDBEAFE),
-                        textColor: const Color(0xFF1D4ED8),
-                        borderColor: const Color(0xFFBFDBFE),
-                      ),
-                      const SizedBox(height: 12),
-
-                      // 💗 SHARE TARGET SEGMENT ROW
-                      _buildAllocationCard(
-                        liveValue: wallet.shareBalance.toStringAsFixed(2),
-                        title: '💖 Share 10% - Be Kind!',
-                        subtitle: 'Give 10% to help others! Buy gifts for family, donate to charity, or help a friend. Sharing makes the world better! ✨',
-                        icon: '💝',
-                        themeColor: const Color(0xFFFCE7F3),
-                        textColor: const Color(0xFFB70E5C),
-                        borderColor: const Color(0xFFFBCFE8),
-                      ),
-                      const SizedBox(height: 16),
+                      IconButton(
+                        icon: Icon(Icons.close_rounded, color: Colors.grey[400]),
+                        onPressed: () {
+                          modalVideoController?.dispose();
+                          Navigator.pop(context);
+                        },
+                      )
                     ],
                   ),
-                ),
-              ),
+                  const Text(
+                    'Watch this quick video to become a money master! 🚀',
+                    style: TextStyle(fontSize: 13, color: Color(0xFF6B7280), fontWeight: FontWeight.w500),
+                  ),
+                  const SizedBox(height: 16),
 
-              // Sticky Bottom Confirmation CTA Execution Button Frame
-              const SizedBox(height: 16),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF4F46E5),
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  elevation: 0,
-                ),
-                // 🛠️ SYNTAX FIX: Cleared out the duplicate nested onPressed loop and sorted the missing tags block
-                onPressed: () async {
-                  final String? profileId = supabaseService.currentUserId;
-                  if (profileId != null) {
-                    try {
-                      // Save compliance metric permanently to Supabase
-                      await supabaseService.client
-                          .from('profiles')
-                          .update({'has_completed_onboarding': true})
-                          .eq('id', profileId);
-                    } catch (e) {
-                      debugPrint('Onboarding sync error: $e');
-                    }
-                  }
+                  // 📜 SCROLLABLE BODY VIEWPORT
+                  Expanded(
+                    child: SingleChildScrollView(
+                      physics: const BouncingScrollPhysics(), 
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // 🎞️ LIVE VIDEO PLAYER CONTAINER (Replaced static gradient placeholder)
+                          Container(
+                            height: 200,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF312E81),
+                              borderRadius: BorderRadius.circular(24),
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(24),
+                              child: isModalVideoInitialized
+                                  ? AspectRatio(
+                                      aspectRatio: modalVideoController!.value.aspectRatio,
+                                      child: Stack(
+                                        alignment: Alignment.center,
+                                        children: [
+                                          VideoPlayer(modalVideoController!),
+                                          GestureDetector(
+                                            onTap: () {
+                                              setModalState(() {
+                                                modalVideoController!.value.isPlaying 
+                                                    ? modalVideoController!.pause() 
+                                                    : modalVideoController!.play();
+                                              });
+                                            },
+                                            child: CircleAvatar(
+                                              radius: 28,
+                                              backgroundColor: Colors.white.withValues(alpha: 0.9),
+                                              child: Icon(
+                                                modalVideoController!.value.isPlaying 
+                                                    ? Icons.pause_rounded 
+                                                    : Icons.play_arrow_rounded,
+                                                color: const Color(0xFF6366F1), 
+                                                size: 32,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    )
+                                  : const Center(
+                                      child: CircularProgressIndicator(color: Colors.white),
+                                    ),
+                            ),
+                          ),
+                          const SizedBox(height: 24),
 
-                  // Close bottom sheet and signal main view state profile reload refresh
-                  if (context.mounted) {
-                    Navigator.pop(context); 
-                    onFinish();             
-                  }
-                },
-                child: const Text(
-                  "Got it! Let's Start! 🚀", 
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
-                ),
+                          const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text('🎓', style: TextStyle(fontSize: 16)),
+                              SizedBox(width: 6),
+                              Text(
+                                'The Smart Money Rule',
+                                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+
+                          // 🟢 SAVE TARGET SEGMENT ROW (Formulaic Split calculation)
+                          _buildAllocationCard(
+                            liveValue: (totalCoins * 0.70).toStringAsFixed(2),
+                            title: '💚 Save 70% - Be Smart!',
+                            subtitle: 'Put 70% of your money into savings for your big dreams like that gaming console or bicycle! This helps you reach your goals faster! 🎯',
+                            icon: '🐷',
+                            themeColor: const Color(0xFFDCFCE7),
+                            textColor: const Color(0xFF15803D),
+                            borderColor: const Color(0xFFBBF7D0),
+                          ),
+                          const SizedBox(height: 12),
+
+                          // 🔵 SPEND TARGET SEGMENT ROW (Formulaic Split calculation)
+                          _buildAllocationCard(
+                            liveValue: (totalCoins * 0.20).toStringAsFixed(2),
+                            title: '💙 Spend 20% - Have Fun!',
+                            subtitle: 'Use 20% for fun stuff you want right now! Snacks, games, or treats - enjoy the rewards of your hard work! 🎉',
+                            icon: '🛍️',
+                            themeColor: const Color(0xFFDBEAFE),
+                            textColor: const Color(0xFF1D4ED8),
+                            borderColor: const Color(0xFFBFDBFE),
+                          ),
+                          const SizedBox(height: 12),
+
+                          // 💗 SHARE TARGET SEGMENT ROW (Formulaic Split calculation)
+                          _buildAllocationCard(
+                            liveValue: (totalCoins * 0.10).toStringAsFixed(2),
+                            title: '💖 Share 10% - Be Kind!',
+                            subtitle: 'Give 10% to help others! Buy gifts for family, donate to charity, or help a friend. Sharing makes the world better! ✨',
+                            icon: '💝',
+                            themeColor: const Color(0xFFFCE7F3),
+                            textColor: const Color(0xFFB70E5C),
+                            borderColor: const Color(0xFFFBCFE8),
+                          ),
+                          const SizedBox(height: 16),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  // Sticky Bottom Confirmation CTA Execution Button Frame
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF4F46E5),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      elevation: 0,
+                    ),
+                    onPressed: () async {
+                      modalVideoController?.pause();
+                      modalVideoController?.dispose(); // Clean up memory threads
+
+                      final String? profileId = supabaseService.currentUserId;
+                      if (profileId != null) {
+                        try {
+                          // Save compliance metric permanently to Supabase
+                          await supabaseService.client
+                              .from('profiles')
+                              .update({'has_completed_onboarding': true})
+                              .eq('id', profileId);
+                        } catch (e) {
+                          debugPrint('Onboarding sync error: $e');
+                        }
+                      }
+
+                      // Close bottom sheet and signal main view state profile reload refresh
+                      if (context.mounted) {
+                        Navigator.pop(context); 
+                        onFinish();             
+                      }
+                    },
+                    child: const Text(
+                      "Got it! Let's Start! 🚀", 
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       );
     },
   );

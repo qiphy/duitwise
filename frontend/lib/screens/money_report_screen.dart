@@ -15,6 +15,7 @@ class MoneyReportScreen extends StatefulWidget {
 
 class _MoneyReportScreenState extends State<MoneyReportScreen> {
   Future<Map<String, dynamic>>? _reportDataFuture;
+  bool _isGeneratingReport = false;
 
   @override
   void initState() {
@@ -116,127 +117,226 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
     };
   }
 
-  @override
-  Widget build(BuildContext context) {
-    if (_reportDataFuture == null) {
-      return const Center(child: CircularProgressIndicator(color: Color(0xFF8B5CF6)));
-    }
+@override
+Widget build(BuildContext context) {
+  if (_reportDataFuture == null) {
+    return const Center(
+      child: CircularProgressIndicator(color: Color(0xFF8B5CF6)),
+    );
+  }
 
-    return FutureBuilder<Map<String, dynamic>>(
-      future: _reportDataFuture,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator(color: Color(0xFF8B5CF6)));
-        }
+  return FutureBuilder<Map<String, dynamic>>(
+    future: _reportDataFuture,
+    builder: (context, snapshot) {
+      if (snapshot.connectionState == ConnectionState.waiting) {
+        return const Center(
+          child: CircularProgressIndicator(color: Color(0xFF8B5CF6)),
+        );
+      }
 
-        final data = snapshot.data ?? {};
-        final weeklyDataMap = data['weeklyData'] as Map<String, Map<String, double>>? ?? {};
-        final int streak = data['streakCount'] ?? 0;
-        final int rate = data['savingsRate'] ?? 0;
+      final data = snapshot.data ?? {};
 
-        // If the database has absolutely 0 transaction history rows yet
-        if (weeklyDataMap.isEmpty) {
-          return const Center(
-            child: Text(
-              'No transaction history logs recorded to populate the report yet. Start executing missions! 📈',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Color(0xFF64748B), fontSize: 14, fontWeight: FontWeight.w500),
-            ),
-          );
-        }
+      final weeklyDataMap =
+          data['weeklyData'] as Map<String, Map<String, double>>? ?? {};
 
-        return RefreshIndicator(
-          color: const Color(0xFF8B5CF6),
-          onRefresh: () async => _loadReportTelemetry(),
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 📊 REAL-TIME CORE TOP KPI HEADER CARD
+      final int streak = data['streakCount'] ?? 0;
+      final int rate = data['savingsRate'] ?? 0;
+
+      final bool hasNoData = weeklyDataMap.isEmpty;
+
+      return RefreshIndicator(
+        color: const Color(0xFF8B5CF6),
+        onRefresh: () async => _loadReportTelemetry(),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(
+            parent: BouncingScrollPhysics(),
+          ),
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 📊 HEADER CARD (ALWAYS VISIBLE)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF7C3AED), Color(0xFF9333EA)],
+                  ),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // TITLE + BUTTON
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Your Money Report 📊',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white.withValues(alpha: 0.2),
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          ),
+
+                          icon: _isGeneratingReport
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Icons.share_rounded, size: 16),
+
+                          label: Text(
+                            _isGeneratingReport ? 'Generating...' : 'Save & Share',
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+
+                          onPressed: _isGeneratingReport
+                              ? null
+                              : () async {
+                                  setState(() => _isGeneratingReport = true);
+
+                                  try {
+                                    final String? currentUid =
+                                        supabaseService.currentUserId;
+
+                                    if (currentUid == null) return;
+
+                                    final walletResponse = await http.get(
+                                      Uri.parse(
+                                        '${supabaseService.backendBaseUrl}/wallet/$currentUid',
+                                      ),
+                                    );
+
+                                    if (walletResponse.statusCode == 200) {
+                                      final WalletModel activeWallet =
+                                          WalletModel.fromJson(jsonDecode(walletResponse.body));
+
+                                      if (context.mounted) {
+                                        await SummaryService()
+                                            .generateAndDownloadReport(context, activeWallet);
+                                      }
+                                    }
+                                  } catch (e) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Failed: $e'),
+                                        backgroundColor: Colors.redAccent,
+                                      ),
+                                    );
+                                  }
+
+                                  setState(() => _isGeneratingReport = false);
+                                },
+                        )
+                      ],
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        _buildKpiItem(
+                          'Total Earned',
+                          'RM ${(data['totalEarned'] ?? 0.0).toStringAsFixed(2)}',
+                        ),
+                        _buildKpiItem(
+                          'Total Saved',
+                          'RM ${(data['savingsAllocated'] ?? 0.0).toStringAsFixed(2)}',
+                        ),
+                        _buildKpiItem('Savings Rate', '$rate%'),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
+              // 🏆 ACHIEVEMENTS (ALWAYS SAFE)
+              _buildSectionHeader('🏆 Your Super Achievements!'),
+              const SizedBox(height: 12),
+
+              _buildAchievementRow(
+                '✅  $streak lifetime ledger logs recorded securely',
+                const Color(0xFFDCFCE7),
+                const Color(0xFF15803D),
+              ),
+
+              _buildAchievementRow(
+                '✅  Allocated $rate% of total earnings toward your future pockets',
+                const Color(0xFFDCFCE7),
+                const Color(0xFF15803D),
+              ),
+
+              _buildAchievementRow(
+                '✅  Account synchronization checks healthy',
+                const Color(0xFFDCFCE7),
+                const Color(0xFF15803D),
+              ),
+
+              const SizedBox(height: 24),
+
+              // 📈 WEEKLY SECTION OR EMPTY STATE
+              _buildSectionHeader('📈 Your Weekly Adventure'),
+              const SizedBox(height: 16),
+
+              if (hasNoData)
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(colors: [Color(0xFF7C3AED), Color(0xFF9333EA)]),
-                    borderRadius: BorderRadius.circular(24),
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: const Column(
                     children: [
-                      // ✅ UPDATED ROW: Appended the native PDF generation hook button to the right side
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            'Your Money Report 📊', 
-                            style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)
-                          ),
-                          ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white.withValues(alpha: 0.2),
-                              foregroundColor: Colors.white,
-                              elevation: 0,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                            ),
-                            icon: const Icon(Icons.share_rounded, size: 16),
-                            label: const Text('Save & Share', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                            onPressed: () async {
-                              try {
-                                // Fetch fresh data models to feed the PDF summary context pipeline natively
-                                final String? currentUid = supabaseService.currentUserId;
-                                if (currentUid == null) return;
-
-                                final walletResponse = await http.get(Uri.parse('${supabaseService.backendBaseUrl}/wallet/$currentUid'));
-                                
-                                if (walletResponse.statusCode == 200) {
-                                  final WalletModel activeWallet = WalletModel.fromJson(jsonDecode(walletResponse.body));
-                                  
-                                  if (context.mounted) {
-                                    // Trigger the clean, optimized AI-generated PDF generator directly 
-                                    await SummaryService().generateAndDownloadReport(context, activeWallet);
-                                  }
-                                }
-                              } catch (e) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('Failed to download ledger: $e'), backgroundColor: Colors.redAccent),
-                                );
-                              }
-                            },
-                          ),
-                        ],
+                      Icon(Icons.bar_chart,
+                          size: 40, color: Color(0xFF94A3B8)),
+                      SizedBox(height: 10),
+                      Text(
+                        'No transactions yet',
+                        style: TextStyle(fontWeight: FontWeight.bold),
                       ),
-                      const SizedBox(height: 16),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          _buildKpiItem('Total Earned', 'RM ${data['totalEarned']?.toStringAsFixed(2)}'),
-                          _buildKpiItem('Total Saved', 'RM ${data['savingsAllocated']?.toStringAsFixed(2)}'),
-                          _buildKpiItem('Savings Rate', '$rate%'),
-                        ],
-                      )
+                      SizedBox(height: 6),
+                      Text(
+                        'Start adding transactions to unlock your report.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF64748B),
+                        ),
+                      ),
                     ],
                   ),
-                ),
-                const SizedBox(height: 24),
-
-                // 🏆 SECTION 1: SUPER ACHIEVEMENTS DYNAMIC MATRIX
-                _buildSectionHeader('🏆 Your Super Achievements!'),
-                const SizedBox(height: 12),
-                _buildAchievementRow('✅  $streak lifetime ledger logs recorded securely', const Color(0xFFDCFCE7), const Color(0xFF15803D)),
-                _buildAchievementRow('✅  Allocated $rate% of total earnings toward your future pockets', const Color(0xFFDCFCE7), const Color(0xFF15803D)),
-                _buildAchievementRow('✅  Account synchronization checks healthy', const Color(0xFFDCFCE7), const Color(0xFF15803D)),
-                const SizedBox(height: 24),
-
-                // 📈 SECTION 2: LIVE WEEKLY ADVENTURE GRAPH SLIDERS
-                _buildSectionHeader('📈 Your Weekly Adventure'),
-                const Text('See how much you earned, saved, and spent each week!', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                const SizedBox(height: 16),
+                )
+              else
                 Container(
                   padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: const Color(0xFFE2E8F0))),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    border:
+                        Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
                   child: Column(
                     children: weeklyDataMap.keys.map((weekKey) {
                       return Padding(
@@ -244,81 +344,104 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(weekKey, style: TextStyle(fontWeight: weekKey == 'Week 1' ? FontWeight.bold : FontWeight.w600, fontSize: 13, color: const Color(0xFF1F2937))),
+                            Text(
+                              weekKey,
+                              style: TextStyle(
+                                fontWeight: weekKey == 'Week 1'
+                                    ? FontWeight.bold
+                                    : FontWeight.w600,
+                                fontSize: 13,
+                                color: const Color(0xFF1F2937),
+                              ),
+                            ),
                             const SizedBox(height: 8),
-                            _buildMiniChartBar('Earned', weeklyDataMap[weekKey]!['earned']!, const Color(0xFF10B981)),
-                            _buildMiniChartBar('Saved', weeklyDataMap[weekKey]!['saved']!, const Color(0xFF3B82F6)),
-                            _buildMiniChartBar('Spent', weeklyDataMap[weekKey]!['spent']!, const Color(0xFFEF4444)),
+                            _buildMiniChartBar(
+                              'Earned',
+                              weeklyDataMap[weekKey]!['earned']!,
+                              const Color(0xFF10B981),
+                            ),
+                            _buildMiniChartBar(
+                              'Saved',
+                              weeklyDataMap[weekKey]!['saved']!,
+                              const Color(0xFF3B82F6),
+                            ),
+                            _buildMiniChartBar(
+                              'Spent',
+                              weeklyDataMap[weekKey]!['spent']!,
+                              const Color(0xFFEF4444),
+                            ),
                           ],
                         ),
                       );
                     }).toList(),
                   ),
                 ),
-                const SizedBox(height: 24),
 
-                // 🍕 SECTION 3: CATEGORY SPLITS FROM REAL DATA ROw
-                _buildSectionHeader('🍕 What Did You Buy?'),
-                const Text('Let\'s see where your pocket allocation went this month!', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildCategoryBox(
-                        name: '🍿 Snacks', 
-                        balance: 'RM ${data['snacksSpent']?.toStringAsFixed(2)}', 
-                        highlight: const Color(0xFFFDBA74),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildCategoryBox(
-                        name: '🎮 Games', 
-                        balance: 'RM ${data['entertainmentSpent']?.toStringAsFixed(2)}', 
-                        highlight: const Color(0xFFC084FC),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildCategoryBox(
-                        name: '🟡 Saved', 
-                        balance: 'RM ${data['savingsAllocated']?.toStringAsFixed(2)}', 
-                        highlight: const Color(0xFF86EFAC),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
+              const SizedBox(height: 24),
 
-                // 💡 SECTION 4: SMART TIPS DYNAMIC ADVICE BLOCKS
-                _buildSectionHeader('✨ Smart Tips Just For You!'),
-                const SizedBox(height: 12),
-                _buildTipCard(
-                  title: 'Great Savings Habit!', 
-                  body: 'You successfully mapped $rate% of your incoming allowances directly into your goal banks. That is excellent structural asset management execution!', 
-                  bg: const Color(0xFFF5F3FF), 
-                  primary: const Color(0xFF6D28D9),
-                ),
-                if (data['snacksSpent'] > 0)
-                  _buildTipCard(
-                    title: 'Evaluate Snack Allocations', 
-                    body: 'You allocated RM ${data['snacksSpent']?.toStringAsFixed(2)} toward snacks this cycle. Modulating impulse snack spending next week can speed up your goal progress!', 
-                    bg: const Color(0xFFFFFBEB), 
-                    primary: const Color(0xFFD97706),
+              // 🍕 CATEGORY SECTION (SAFE DEFAULTS)
+              _buildSectionHeader('🍕 What Did You Buy?'),
+              const SizedBox(height: 16),
+
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildCategoryBox(
+                      name: '🍿 Snacks',
+                      balance:
+                          'RM ${(data['snacksSpent'] ?? 0.0).toStringAsFixed(2)}',
+                      highlight: const Color(0xFFFDBA74),
+                    ),
                   ),
-                _buildTipCard(
-                  title: 'Consistency Loop Advice', 
-                  body: 'Every single mission task you execute helps build long-term passive financial habits. Keep reviewing your active chores terminal panel daily!', 
-                  bg: const Color(0xFFECFDF5), 
-                  primary: const Color(0xFF059669),
-                ),
-              ],
-            ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildCategoryBox(
+                      name: '🎮 Games',
+                      balance:
+                          'RM ${(data['entertainmentSpent'] ?? 0.0).toStringAsFixed(2)}',
+                      highlight: const Color(0xFFC084FC),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildCategoryBox(
+                      name: '🟡 Saved',
+                      balance:
+                          'RM ${(data['savingsAllocated'] ?? 0.0).toStringAsFixed(2)}',
+                      highlight: const Color(0xFF86EFAC),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 24),
+
+              // 💡 TIPS (ALWAYS SAFE)
+              _buildSectionHeader('✨ Smart Tips Just For You!'),
+              const SizedBox(height: 12),
+
+              _buildTipCard(
+                title: 'Great Savings Habit!',
+                body:
+                    'You successfully mapped $rate% of your income into savings.',
+                bg: const Color(0xFFF5F3FF),
+                primary: const Color(0xFF6D28D9),
+              ),
+
+              _buildTipCard(
+                title: 'Consistency Loop Advice',
+                body:
+                    'Keep building daily financial habits for long-term growth.',
+                bg: const Color(0xFFECFDF5),
+                primary: const Color(0xFF059669),
+              ),
+            ],
           ),
-        );
-      },
-    );
-  }
+        ),
+      );
+    },
+  );
+}
 
   Widget _buildSectionHeader(String text) {
     return Text(text, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)));

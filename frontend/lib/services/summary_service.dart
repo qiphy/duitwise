@@ -15,7 +15,7 @@ class SummaryService {
       final String goalName = goalData != null ? goalData['goal_name'] ?? 'None' : 'None';
       
       final response = await http.post(
-        Uri.parse('${supabaseService.backendBaseUrl}/ai/analyze-ledger'),
+        Uri.parse('https://tbrefzeytkflqyadayvs.supabase.co/functions/v1/analyze-ledger'),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "saveBalance": wallet.saveBalance ?? 0.0,
