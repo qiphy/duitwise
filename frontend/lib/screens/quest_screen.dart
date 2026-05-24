@@ -264,27 +264,33 @@ if (mounted) {
     }
 
     // 2. 💾 DIRECT SUPABASE INTEGRATION ENGINE LAYER
+    // 2. Direct Supabase Mutation Engine
     if (isCorrect) {
       try {
-        // Execute the server-side numeric incrementer function we spun up in Step 1
-        await supabaseService.client.rpc(
-          'increment_child_coins',
-          params: {
-            'user_id': profileId,
-            'coin_delta': 0.10, // Pass a precise floating-point standard decimal fraction
-          },
-        );
-
-        // Also bump up the child's XP attributes profile tracking parameters as a secondary reward multiplier
-        // 🛠️ REPLACE WITH THIS:
-        await supabaseService.client.rpc(
-          'increment_child_xp',
-          params: {
-            'user_id': profileId,
-            'xp_delta': 20, // Adds exactly 20 XP to the existing database value natively
-          },
-        );
-
+        // Fire off all database tracking logs concurrently
+        await Future.wait([
+          // A. Increment the raw wallet coin asset balance
+          supabaseService.client.rpc('increment_child_coins', params: {
+            'user_id': profileId, 
+            'coin_delta': 0.10
+          }),
+          
+          // B. Bump child status XP parameters
+          supabaseService.client.rpc('increment_child_xp', params: {
+            'user_id': profileId, 
+            'xp_delta': 20
+          }),
+          
+          // C. ✅ NEW: Insert a verifiable ledger row into your transactions history stream
+          // This forces the Money Report loop to automatically pick up video earnings as 'Total Earned'
+          supabaseService.client.from('transactions').insert({
+            'title': 'Video Question',
+            'profile_id': profileId,
+            'amount': 0.10, // Positive value means it qualifies as Income/Earned
+            'category': 'Video Reward', // Matches your report string parser criteria
+            'created_at': DateTime.now().toIso8601String(),
+          }),
+        ]);
       } catch (e) {
         debugPrint('Direct Supabase transaction failure ledger exception: $e');
       }

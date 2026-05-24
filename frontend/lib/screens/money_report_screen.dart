@@ -439,7 +439,7 @@ ElevatedButton.icon(
               const SizedBox(height: 24),
 
               // 💡 TIPS (ALWAYS SAFE)
-              _buildSectionHeader('✨ Smart Tips Just For You!'),
+              _buildSectionHeader('✨ Smart Insights Just For You!'),
               const SizedBox(height: 12),
 
               _buildTipCard(
@@ -451,7 +451,7 @@ ElevatedButton.icon(
               ),
 
               _buildTipCard(
-                title: 'Consistency Loop Advice',
+                title: 'Consistency Loop Habit',
                 body:
                     'Keep building daily financial habits for long-term growth.',
                 bg: const Color(0xFFECFDF5),
