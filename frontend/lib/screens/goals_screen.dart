@@ -18,19 +18,41 @@ class _GoalsScreenState extends State<GoalsScreen> {
     _fetchActiveSavingsGoal();
   }
 
-  void _fetchActiveSavingsGoal() {
-    final String? profileId = supabaseService.currentUserId;
-    if (profileId != null) {
-      setState(() {
-        // ✅ FIXED: Selecting current_amount to match your actual database column layout
-        _savingsGoalFuture = supabaseService.client
-            .from('savings_goals')
-            .select('goal_name, target_amount, current_amount')
-            .eq('profile_id', profileId)
-            .maybeSingle();
-      });
-    }
+void _fetchActiveSavingsGoal() {
+  final String? profileId = supabaseService.currentUserId;
+  if (profileId != null) {
+    setState(() {
+      _savingsGoalFuture = () async {
+        // Run both queries concurrently to minimize network latency
+        final futures = await Future.wait([
+          supabaseService.client
+              .from('savings_goals')
+              .select('goal_name, target_amount')
+              .eq('profile_id', profileId)
+              .maybeSingle(),
+          supabaseService.client
+              .from('wallets')
+              .select('save_balance')
+              .eq('profile_id', profileId)
+              .maybeSingle(),
+        ]);
+
+        final goalData = futures[0] as Map<String, dynamic>?;
+        final walletData = futures[1] as Map<String, dynamic>?;
+
+        // If no savings goal exists for the user, return null to show the "No Dream Goal" UI
+        if (goalData == null) return null;
+
+        // Map the data into the exact keys your Widget build expects
+        return {
+          'goal_name': goalData['goal_name'],
+          'target_amount': goalData['target_amount'],
+          'current_amount': walletData != null ? walletData['save_balance'] : 0.00,
+        };
+      }();
+    });
   }
+}
 
 @override
   Widget build(BuildContext context) {
@@ -81,8 +103,8 @@ class _GoalsScreenState extends State<GoalsScreen> {
         }
 
         final String goalName = goalData['goal_name'] ?? 'My Savings Dream';
-        final double targetAmount = (goalData['target_amount'] ?? 0.0).toDouble();
-        final double currentAmount = (goalData['current_amount'] ?? 0.0).toDouble();
+        final double targetAmount = (goalData['target_amount'] ?? 0.00).toDouble();
+        final double currentAmount = (goalData['current_amount'] ?? 0.00).toDouble();
 
         return RefreshIndicator(
           color: const Color(0xFF8B5CF6),
@@ -137,8 +159,8 @@ class _GoalsScreenState extends State<GoalsScreen> {
                     
                     // 📊 Progress bar uses raw metrics for width limits
                     ProgressBar(
-                      currentXp: currentAmount.toInt(),
-                      maxXp: targetAmount.toInt(),
+                      currentXp: currentAmount.toDouble(),
+                      maxXp: targetAmount.toDouble(),
                       isCurrency: true,
                     ),
                     const SizedBox(height: 12),
@@ -147,10 +169,6 @@ class _GoalsScreenState extends State<GoalsScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(
-                          'Saved: RM ${currentAmount.toStringAsFixed(2)} / RM ${targetAmount.toStringAsFixed(2)} 🟡',
-                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF16A34A)),
-                        ),
                         Text(
                           '${((currentAmount / (targetAmount > 0 ? targetAmount : 1)) * 100).toStringAsFixed(0)}% Completed',
                           style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF8B5CF6)),

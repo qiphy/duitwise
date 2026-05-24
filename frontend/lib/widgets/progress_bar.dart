@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
 class ProgressBar extends StatelessWidget {
-  final int currentXp;
-  final int maxXp;
+  final double currentXp;
+  final double maxXp;
   final bool isCurrency; // ✅ Added flag to distinguish between XP tracking and Currency tracking
 
   const ProgressBar({
