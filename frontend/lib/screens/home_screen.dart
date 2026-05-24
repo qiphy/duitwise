@@ -1056,9 +1056,10 @@ Future<void> _approveTaskAndDisburseFunds(String taskId, String childId, double 
           // 🗂️ TAB CONFIGURATION: Content screens only (Headers have been cleanly abstracted out)
           final List<Widget> screens = [
             _buildHomeDashboard(snapshot),          // Screen 1: Home Dashboard Panel
-            const GoalsScreen(),                    // Screen 2: Missions
+            const GoalsScreen(),          
+            const MoneyReportScreen(),             // Screen 2: Missions
             const TransactionHistoryScreen(),  
-            const MoneyReportScreen(),              // Screen 3: History Reports
+           // Screen 3: History Reports
           ];
 
           return Scaffold(
