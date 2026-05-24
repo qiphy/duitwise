@@ -180,7 +180,7 @@ Widget build(BuildContext context) {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        ElevatedButton.icon(
+ElevatedButton.icon(
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.white.withValues(alpha: 0.2),
                             foregroundColor: Colors.white,
@@ -203,7 +203,7 @@ Widget build(BuildContext context) {
                               : const Icon(Icons.share_rounded, size: 16),
 
                           label: Text(
-                            _isGeneratingReport ? 'Generating...' : 'Save & Share',
+                            _isGeneratingReport ? 'Generating...' : 'Save Money Report',
                             style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
                           ),
 
@@ -213,36 +213,58 @@ Widget build(BuildContext context) {
                                   setState(() => _isGeneratingReport = true);
 
                                   try {
-                                    final String? currentUid =
-                                        supabaseService.currentUserId;
-
+                                    final String? currentUid = supabaseService.currentUserId;
                                     if (currentUid == null) return;
 
-                                    final walletResponse = await http.get(
-                                      Uri.parse(
-                                        '${supabaseService.backendBaseUrl}/wallet/$currentUid',
-                                      ),
-                                    );
+                                    // 🛠️ DIRECT CLIENT FETCH: Read wallet details straight from the Supabase relation layer
+                                    final List<dynamic> walletRecords = await supabaseService.client
+                                        .from('wallets')
+                                        .select('total_balance, save_balance, spend_balance, share_balance')
+                                        .eq('profile_id', currentUid);
 
-                                    if (walletResponse.statusCode == 200) {
-                                      final WalletModel activeWallet =
-                                          WalletModel.fromJson(jsonDecode(walletResponse.body));
-
-                                      if (context.mounted) {
-                                        await SummaryService()
-                                            .generateAndDownloadReport(context, activeWallet);
+                                    double currentTotal = 0.00;
+                                    if (walletRecords.isNotEmpty) {
+                                      final w = walletRecords.first;
+                                      if (w['total_balance'] != null) {
+                                        currentTotal = double.parse(w['total_balance'].toString());
+                                      } else {
+                                        final double s = double.parse((w['save_balance'] ?? 0.0).toString());
+                                        final double sp = double.parse((w['spend_balance'] ?? 0.0).toString());
+                                        final double sh = double.parse((w['share_balance'] ?? 0.0).toString());
+                                        currentTotal = s + sp + sh;
                                       }
                                     }
-                                  } catch (e) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text('Failed: $e'),
-                                        backgroundColor: Colors.redAccent,
-                                      ),
+
+                                    // 🧮 FORMULA SYNCHRONIZATION: Package variables cleanly matching parent parameters
+                                    final WalletModel activeWallet = WalletModel(
+                                      profileId: currentUid,
+                                      saveBalance: currentTotal * 0.70,
+                                      spendBalance: currentTotal * 0.20,
+                                      shareBalance: currentTotal * 0.10,
                                     );
+
+                                    // 🚀 EXECUTE COMPILATION TASK
+                                    if (context.mounted) {
+                                      await SummaryService().generateAndDownloadReport(
+                                        context, 
+                                        activeWallet, 
+                                        'Your', // ✅ FIXED: Passed custom name context string smoothly
+                                      );
+                                    }
+                                  } catch (e) {
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text('Failed: $e'),
+                                          backgroundColor: Colors.redAccent,
+                                        ),
+                                      );
+                                    }
                                   }
 
-                                  setState(() => _isGeneratingReport = false);
+                                  if (mounted) {
+                                    setState(() => _isGeneratingReport = false);
+                                  }
                                 },
                         )
                       ],

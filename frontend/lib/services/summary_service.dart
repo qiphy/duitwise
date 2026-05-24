@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'package:flutter/material.dart' show BuildContext;
+import 'package:flutter/material.dart' show BuildContext, debugPrint;
 import 'package:http/http.dart' as http;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -9,50 +9,63 @@ import '../supabase_service.dart';
 import '../models.dart';
 
 class SummaryService {
-  // 🧠 Connects to the new Python backend method to fetch custom OpenRouter insights
+  // 🧠 Connects to the Python backend method to fetch custom OpenRouter insights
   Future<String> _fetchAIInsight(WalletModel wallet, Map<String, dynamic>? goalData, double earned, double spent) async {
     try {
       final String goalName = goalData != null ? goalData['goal_name'] ?? 'None' : 'None';
       
+      // Calculate dynamic formula subsets to give accurate context vectors to the AI analyzer model
+      final double totalPool = wallet.totalBalance ?? 
+          ((wallet.saveBalance ?? 0.0) + (wallet.spendBalance ?? 0.0) + (wallet.shareBalance ?? 0.0));
+
       final response = await http.post(
         Uri.parse('https://tbrefzeytkflqyadayvs.supabase.co/functions/v1/analyze-ledger'),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
-          "saveBalance": wallet.saveBalance ?? 0.0,
-          "spendBalance": wallet.spendBalance ?? 0.0,
+          "saveBalance": totalPool * 0.70,
+          "spendBalance": totalPool * 0.20,
           "totalEarned": earned,
           "totalSpent": spent,
           "activeDream": goalName
         }),
-      );
+      ).timeout(const Duration(seconds: 10)); // ⏱️ Hard cutoff safety tracking
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return data['insight'] ?? 'You are doing great! Keep tracking your pockets and balancing your savings targets.';
       }
     } catch (_) {
-      // Graceful fallback if the network times out or the server is restarting
+      // Catch network drops or render cold starts silently
     }
     return 'Fantastic work tracking your ledger this month! Your savings rate is steady. Keep checking your missions list to build continuous habits towards your big goals!';
   }
 
-  Future<void> generateAndDownloadReport(BuildContext context, WalletModel wallet) async {
-    final String? profileId = supabaseService.currentUserId;
+  // 🛠️ COHERENT INTERFACE: Takes childName dynamically to format statements beautifully for both scopes
+  Future<void> generateAndDownloadReport(BuildContext context, WalletModel wallet, String childName) async {
+    final String? profileId = wallet.profileId;
     if (profileId == null) return;
 
     final doc = pw.Document();
     final DateTime now = DateTime.now();
     final String currentMonthStr = DateFormat('MMMM yyyy').format(now);
 
+    // Default structural variables fallback setups
+    Map<String, dynamic>? goalData;
+    List<dynamic> txData = [];
+    String aiInsight = 'Fantastic work tracking your ledger this month! Your savings rate is steady. Keep checking your missions list to build continuous habits towards your big goals!';
+
     try {
-      // 1. Fetch data aggregates concurrently from Supabase
-      final responses = await Future.wait<dynamic>([
+      // 1. Concurrent Fetch with 10s Timeout Limit
+      final dynamic aggregatedData = await Future.wait<dynamic>([
         supabaseService.client.from('savings_goals').select('*').eq('profile_id', profileId).maybeSingle(),
         supabaseService.client.from('transactions').select('*').eq('profile_id', profileId).order('created_at', ascending: false),
-      ]);
+      ]).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => [null, <dynamic>[]],
+      );
 
-      final goalData = responses[0];
-      final List<dynamic> txData = responses[1] as List<dynamic>;
+      goalData = aggregatedData[0];
+      txData = aggregatedData[1] as List<dynamic>;
 
       double totalEarned = 0.0;
       double totalSpent = 0.0;
@@ -65,10 +78,19 @@ class SummaryService {
         }
       }
 
-      // 🤖 Await the Python OpenRouter analysis payload 
-      final String aiInsight = await _fetchAIInsight(wallet, goalData, totalEarned, totalSpent);
+      // 🤖 Fetch AI insights or gracefully use system fallback strings
+      try {
+        aiInsight = await _fetchAIInsight(wallet, goalData, totalEarned, totalSpent)
+            .timeout(const Duration(seconds: 10));
+      } catch (e) {
+        debugPrint('⚠️ AI endpoint unreached. Applying local engine copy fallback context rules.');
+      }
 
-      // 2. High-Fidelity UI Layout Design Canvas
+      // 🧮 FORMULA SYNCHRONIZATION POOL
+      final double totalCoins = wallet.totalBalance ?? 
+          ((wallet.saveBalance ?? 0.0) + (wallet.spendBalance ?? 0.0) + (wallet.shareBalance ?? 0.0));
+
+      // 2. Document Canvas Build Pattern
       doc.addPage(
         pw.Page(
           pageFormat: PdfPageFormat.a4,
@@ -77,7 +99,6 @@ class SummaryService {
             return pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
-                // 🏷️ CLEAN HEADER BRAND BLOCK (Scrubbed Emojis)
                 pw.Row(
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
@@ -86,7 +107,8 @@ class SummaryService {
                       children: [
                         pw.Text('DUITWISE FINANCIAL LOG', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#8B5CF6'), letterSpacing: 1.2)),
                         pw.SizedBox(height: 4),
-                        pw.Text('My Monthly Statement', style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#0F172A'))),
+                        // ✅ DYNAMIC STATEMENT BANNER TITLE
+                        pw.Text('$childName\'s Monthly Statement', style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#0F172A'))),
                         pw.SizedBox(height: 2),
                         pw.Text('Period: $currentMonthStr', style: pw.TextStyle(fontSize: 11, color: PdfColor.fromHex('#64748B'))),
                       ],
@@ -102,21 +124,19 @@ class SummaryService {
                 pw.Divider(color: PdfColor.fromHex('#E2E8F0'), thickness: 1),
                 pw.SizedBox(height: 16),
 
-                // 🧠 AI MENTOR CARD INSIGHTS CONTAINER (Stylized with left accent border instead of emoji)
                 pw.Container(
                   width: double.infinity,
                   padding: const pw.EdgeInsets.all(16),
                   decoration: pw.BoxDecoration(
                     color: PdfColor.fromHex('#F5F3FF'),
-                    borderRadius: pw.BorderRadius.circular(16), // ✅ Works perfectly now!
-                    border: pw.Border.all(color: PdfColor.fromHex('#DDD6FE'), width: 1.2), // ✅ Uniform border style
+                    borderRadius: pw.BorderRadius.circular(16), 
+                    border: pw.Border.all(color: PdfColor.fromHex('#DDD6FE'), width: 1.2), 
                   ),
                   child: pw.Column(
                     crossAxisAlignment: pw.CrossAxisAlignment.start,
                     children: [
                       pw.Text('DuitWise AI Mentor Insights', style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#6D28D9'))),
                       pw.SizedBox(height: 6),
-                      // Elegant modern divider substitute line inside the uniform container bounding boxes
                       pw.Container(height: 2, width: 40, decoration: pw.BoxDecoration(color: PdfColor.fromHex('#8B5CF6'))),
                       pw.SizedBox(height: 10),
                       pw.Text(
@@ -128,20 +148,19 @@ class SummaryService {
                 ),
                 pw.SizedBox(height: 24),
 
-                // BALANCE SHEET CONTAINERS
+                // BALANCE SHEET CONTAINERS (Forced explicit formula split outputs)
                 pw.Text('Pocket Allocations Balance Sheet', style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#0F172A'))),
                 pw.SizedBox(height: 10),
                 pw.Row(
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
-                    _buildCleanStatBox('SAVE WALLET (70%)', 'RM ${wallet.saveBalance?.toStringAsFixed(2)}', '#16A34A', '#DCFCE7'),
-                    _buildCleanStatBox('SPEND CASH (20%)', 'RM ${wallet.spendBalance?.toStringAsFixed(2)}', '#2563EB', '#DBEAFE'),
-                    _buildCleanStatBox('SHARE POCKET (10%)', 'RM ${wallet.shareBalance?.toStringAsFixed(2)}', '#DB2777', '#FCE7F3'),
+                    _buildCleanStatBox('SAVE WALLET (70%)', 'RM ${(totalCoins * 0.70).toStringAsFixed(2)}', '#16A34A', '#DCFCE7'),
+                    _buildCleanStatBox('SPEND CASH (20%)', 'RM ${(totalCoins * 0.20).toStringAsFixed(2)}', '#2563EB', '#DBEAFE'),
+                    _buildCleanStatBox('SHARE POCKET (10%)', 'RM ${(totalCoins * 0.10).toStringAsFixed(2)}', '#DB2777', '#FCE7F3'),
                   ],
                 ),
                 pw.SizedBox(height: 24),
 
-                // ACTIVE DREAM STATUS CARD
                 pw.Text('Target Goals & Long-Term Dreams', style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#0F172A'))),
                 pw.SizedBox(height: 10),
                 pw.Container(
@@ -159,7 +178,7 @@ class SummaryService {
                             pw.Column(
                               crossAxisAlignment: pw.CrossAxisAlignment.start,
                               children: [
-                                pw.Text('Active Goal: ${goalData['goal_name']}', style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#1E293B'))),
+                                pw.Text('Active Goal: ${goalData['goal_name']}', style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#1E2937'))),
                                 pw.SizedBox(height: 2),
                                 pw.Text('Keep executing milestones to unlock this reward!', style: pw.TextStyle(fontSize: 10, color: PdfColor.fromHex('#64748B'))),
                               ],
@@ -171,7 +190,6 @@ class SummaryService {
                 ),
                 pw.SizedBox(height: 24),
 
-                // HISTORICAL DATA LEDGER TABLE
                 pw.Text('Account Activity Summary Ledger', style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#0F172A'))),
                 pw.SizedBox(height: 4),
                 pw.Row(
@@ -183,41 +201,48 @@ class SummaryService {
                 ),
                 pw.SizedBox(height: 10),
 
-                pw.TableHelper.fromTextArray(
-                  border: pw.TableBorder(
-                    horizontalInside: pw.BorderSide(color: PdfColor.fromHex('#F1F5F9'), width: 1),
-                    bottom: pw.BorderSide(color: PdfColor.fromHex('#E2E8F0'), width: 1.5),
+                if (txData.isNotEmpty)
+                  pw.TableHelper.fromTextArray(
+                    border: pw.TableBorder(
+                      horizontalInside: pw.BorderSide(color: PdfColor.fromHex('#F1F5F9'), width: 1),
+                      bottom: pw.BorderSide(color: PdfColor.fromHex('#E2E8F0'), width: 1.5),
+                    ),
+                    headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#1E2937'), fontSize: 10),
+                    headerDecoration: pw.BoxDecoration(color: PdfColor.fromHex('#F8FAFC')),
+                    cellAlignment: pw.Alignment.centerLeft,
+                    cellHeight: 26,
+                    cellStyle: const pw.TextStyle(fontSize: 10),
+                    headers: ['Transaction Description Log', 'Category', 'Net Value Impact'],
+                    data: txData.take(8).map((tx) {
+                      final double amt = (tx['amount'] ?? 0.0).toDouble();
+                      final String prefix = amt >= 0 ? '+' : '-';
+                      return [
+                        tx['title'] ?? 'Coin Movement Record',
+                        tx['category'] ?? 'General',
+                        '$prefix RM ${amt.abs().toStringAsFixed(2)}',
+                      ];
+                    }).toList(),
+                  )
+                else
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.symmetric(vertical: 20),
+                    child: pw.Center(
+                      child: pw.Text('No transactional operations logged for this cycle history ledger yet.', style: pw.TextStyle(fontSize: 10, fontStyle: pw.FontStyle.italic, color: PdfColor.fromHex('#64748B'))),
+                    ),
                   ),
-                  headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#1E293B'), fontSize: 10),
-                  headerDecoration: pw.BoxDecoration(color: PdfColor.fromHex('#F8FAFC')),
-                  cellAlignment: pw.Alignment.centerLeft,
-                  cellHeight: 26,
-                  cellStyle: const pw.TextStyle(fontSize: 10),
-                  headers: ['Transaction Description Log', 'Category', 'Net Value Impact'],
-                  data: txData.take(8).map((tx) {
-                    final double amt = (tx['amount'] ?? 0.0).toDouble();
-                    final String prefix = amt >= 0 ? '+' : '-';
-                    return [
-                      tx['title'] ?? 'Coin Movement Record',
-                      tx['category'] ?? 'General',
-                      '$prefix RM ${amt.abs().toStringAsFixed(2)}',
-                    ];
-                  }).toList(),
-                ),
               ],
             );
           },
         ),
       );
 
-      // 3. Dispatch to device printing system manager
       await Printing.layoutPdf(
         onLayout: (PdfPageFormat format) async => doc.save(),
-        name: 'DuitWise_AI_Summary_${now.millisecondsSinceEpoch}.pdf',
+        name: 'DuitWise_AI_Summary_${childName}_${now.millisecondsSinceEpoch}.pdf',
       );
 
     } catch (e) {
-      print('Document generation pipeline runtime fatal crash: $e');
+      debugPrint('Document generation pipeline runtime fatal crash: $e');
     }
   }
 

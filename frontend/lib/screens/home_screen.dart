@@ -14,6 +14,7 @@ import '../services/notification_service.dart';
 import 'transaction_history_screen.dart';
 import 'money_report_screen.dart';
 import 'package:video_player/video_player.dart';
+import '../services/summary_service.dart';
 
 // --- Local Dashboard Data Composition Wrapper ---
 class DashboardData {
@@ -239,7 +240,7 @@ Future<DashboardData> _fetchDashboardTelemetry() async {
     );
   }
 
-// --- Enhanced Parent Control Sheet: Task Validation & Household Disconnection ---
+  // --- Enhanced Parent Control Sheet: Task Validation & Household Disconnection ---
   Future<void> _showParentTaskManagerBottomSheet(String childName, String childId) async {
     await showModalBottomSheet(
       context: context,
@@ -254,8 +255,132 @@ Future<DashboardData> _fetchDashboardTelemetry() async {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Header Block
-                  Text('$childName\'s Missions 🎯', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                  // --- UPDATED HEADER BLOCK: Live Balance Tracker, Rectangle Download Button, & Inline Transfer Action ---
+                  FutureBuilder<List<dynamic>>(
+                    future: supabaseService.client
+                        .from('wallets')
+                        .select('total_balance, save_balance, spend_balance, share_balance')
+                        .eq('profile_id', childId), // Uses the specific childId of the tapped card
+                    builder: (context, walletSnapshot) {
+                      final walletData = walletSnapshot.data ?? [];
+                      
+                      double currentTotal = 0.00;
+                      if (walletData.isNotEmpty) {
+                        if (walletData.first['total_balance'] != null) {
+                          currentTotal = double.parse(walletData.first['total_balance'].toString());
+                        } else {
+                          // Structural fallback calculation if total_balance field is null
+                          final double s = double.parse((walletData.first['save_balance'] ?? 0.0).toString());
+                          final double sp = double.parse((walletData.first['spend_balance'] ?? 0.0).toString());
+                          final double sh = double.parse((walletData.first['share_balance'] ?? 0.0).toString());
+                          currentTotal = s + sp + sh;
+                        }
+                      }
+
+                      return Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('$childName\'s Missions 🎯', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Balance: RM ${currentTotal.toStringAsFixed(2)} 🟡',
+                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF8B5CF6)),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // 📥 INJECTED ACTION: Rectangle Monthly Financial Statement Downloader Button
+ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF8B5CF6), // Purple color accent for structural separation
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                  elevation: 0,
+                                ),
+                                icon: const Icon(Icons.download_rounded, color: Colors.white, size: 16),
+                                label: const Text('Download Monthly Report', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                                onPressed: () async {
+                                  Navigator.pop(context); // Dismiss current sheet framework layer
+                                  
+                                  // 1. Trigger the processing feedback snackbar immediately
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Row(
+                                        children: [
+                                          const SizedBox(
+                                            width: 16, height: 16,
+                                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                                          ),
+                                          const SizedBox(width: 16),
+                                          Text('Generating monthly report statement for $childName...'),
+                                        ],
+                                      ),
+                                      duration: const Duration(seconds: 3),
+                                    ),
+                                  );
+
+                                  // 2. Package current metrics into the required WalletModel structure 
+                                  final WalletModel childWalletContext = WalletModel(
+                                    profileId: childId,
+                                    saveBalance: currentTotal * 0.70,
+                                    spendBalance: currentTotal * 0.20,
+                                    shareBalance: currentTotal * 0.10,
+                                  );
+
+                                  // 3. Fire the SummaryService pipeline passing the childName string vector context
+                                  try {
+                                    await SummaryService().generateAndDownloadReport(
+                                      context, 
+                                      childWalletContext,
+                                      childName, // ✅ FIXED: Passed childName parameter safely
+                                    );
+                                    
+                                    // Clear generation status loader once printing system takes over
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context).clearSnackBars();
+                                    }
+                                  } catch (e) {
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context).clearSnackBars();
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          backgroundColor: Colors.redAccent,
+                                          content: Text('Failed to compile document: $e'),
+                                        ),
+                                      );
+                                    }
+                                  }
+                                },
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF10B981),
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                  elevation: 0,
+                                ),
+                                icon: const Icon(Icons.send_rounded, color: Colors.white, size: 16),
+                                label: const Text('Transfer', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                                onPressed: () {
+                                  Navigator.pop(context);
+                                  _showTransferMoneyBottomSheet(childName, childId);
+                                },
+                              ),
+                            ],
+                          ),
+                        ],
+                      );
+                    },
+                  ),
                   const SizedBox(height: 16),
                   
                   // Active Task Tracker Stream
@@ -264,7 +389,7 @@ Future<DashboardData> _fetchDashboardTelemetry() async {
                       future: supabaseService.client
                           .from('tasks')
                           .select('id, title, reward_amount, status, proof_url, assigned_at')
-                          .eq('profile_id', childId) // 🛠️ FIXED: Standardized target column matching child query layout rules
+                          .eq('profile_id', childId) 
                           .order('id', ascending: false),
                       builder: (context, taskSnapshot) {
                         if (taskSnapshot.connectionState == ConnectionState.waiting) {
@@ -498,6 +623,134 @@ Future<DashboardData> _fetchDashboardTelemetry() async {
       },
     );
   }
+
+  void _showTransferMoneyBottomSheet(String childName, String childId) {
+  final TextEditingController amountController = TextEditingController();
+  final formKey = GlobalKey<FormState>();
+
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    ),
+    builder: (context) => Padding(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+        top: 24,
+        left: 24,
+        right: 24,
+      ),
+      child: Form(
+        key: formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Transfer to $childName 💸', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            const Text(
+              'Funds will be instantly split using the Smart Money Rule (70% Save, 20% Spend, 10% Share).',
+              style: TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: amountController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: 'Amount (RM)',
+                prefixText: 'RM ',
+                filled: true,
+                fillColor: Colors.grey[100],
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              ),
+              validator: (val) {
+                if (val == null || double.tryParse(val) == null) return 'Enter a valid amount';
+                if (double.parse(val) <= 0) return 'Amount must be greater than zero';
+                return null;
+              },
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF10B981), // Green accents for instant transfers
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+                onPressed: () async {
+                  if (!formKey.currentState!.validate()) return;
+                  final double transferAmount = double.parse(amountController.text.trim());
+                  
+                  try {
+                    // Fetch current wallet structural profile matrices
+                    final List<dynamic> walletRecords = await supabaseService.client
+                        .from('wallets')
+                        .select('total_balance, save_balance, spend_balance, share_balance')
+                        .eq('profile_id', childId);
+
+                    final double saveIncrement = transferAmount * 0.70;
+                    final double spendIncrement = transferAmount * 0.20;
+                    final double shareIncrement = transferAmount * 0.10;
+
+                    if (walletRecords.isNotEmpty) {
+                      final currentWallet = walletRecords.first;
+                      final double currentTotal = (currentWallet['total_balance'] ?? 0.0).toDouble();
+                      final double currentSave = (currentWallet['save_balance'] ?? 0.0).toDouble();
+                      final double currentSpend = (currentWallet['spend_balance'] ?? 0.0).toDouble();
+                      final double currentShare = (currentWallet['share_balance'] ?? 0.0).toDouble();
+
+                      await supabaseService.client.from('wallets').update({
+                        'total_balance': currentTotal + transferAmount,
+                        'save_balance': currentSave + saveIncrement,
+                        'spend_balance': currentSpend + spendIncrement,
+                        'share_balance': currentShare + shareIncrement,
+                      }).eq('profile_id', childId);
+                    } else {
+                      await supabaseService.client.from('wallets').insert({
+                        'profile_id': childId,
+                        'total_balance': transferAmount,
+                        'save_balance': saveIncrement,
+                        'spend_balance': spendIncrement,
+                        'share_balance': shareIncrement,
+                      });
+                    }
+
+                    // Create transaction audit log item row entry
+                    await supabaseService.client.from('transactions').insert({
+                      'profile_id': childId,
+                      'title': 'Direct Parent Transfer',
+                      'amount': transferAmount,
+                      'category': 'Transfer',
+                    });
+
+                    if (context.mounted) {
+                      Navigator.pop(context);
+                      _refreshData();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Successfully transferred RM ${transferAmount.toStringAsFixed(2)} to $childName!')),
+                      );
+                    }
+                  } catch (e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Transfer failed: $e'), backgroundColor: Colors.redAccent),
+                      );
+                    }
+                  }
+                },
+                child: const Text('Confirm Instant Transfer', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(height: 24),
+          ],
+        ),
+      ),
+    ),
+  );
+}
 
   // --- Image Lightbox Overlay Modal Dialogue ---
   void _showFullImagePreview(String url) {
@@ -2118,9 +2371,10 @@ Widget _buildLinkedChildrenSection() {
           ),
         ] else ... [
           FutureBuilder<List<dynamic>>(
+            // 🛠️ FIXED: Joined 'wallets' relation inside the select filter context statement
             future: supabaseService.client
                 .from('profiles')
-                .select('id, username, email, is_approved, tasks(id, status)')
+                .select('id, username, email, is_approved, tasks(id, status), wallets(total_balance, save_balance, spend_balance, share_balance)')
                 .eq('parent_id', parentId ?? '')
                 .eq('role', 'child'),
             builder: (context, snapshot) {
@@ -2156,7 +2410,7 @@ Widget _buildLinkedChildrenSection() {
               }
 
               // 🌟 RESPONSIVE GRID GRID LAYOUT BLOCK
-              return LayoutBuilder(
+         return LayoutBuilder(
                 builder: (context, constraints) {
                   // If screen width is wider than 600px, use a two-column responsive split grid natively
                   final int crossAxisCount = constraints.maxWidth > 600 ? 2 : 1;
@@ -2179,6 +2433,21 @@ Widget _buildLinkedChildrenSection() {
                       
                       final List<dynamic> tasks = kid['tasks'] ?? [];
                       final int pendingCount = tasks.where((t) => t['status'] == 'pending').length;
+
+                      // 🧮 FIXED: Parsed nested relation object as a Map instead of a List to avoid type crash
+                      final dynamic walletMap = kid['wallets'];
+                      double childBalance = 0.00;
+                      
+                      if (walletMap != null && walletMap is Map) {
+                        if (walletMap['total_balance'] != null) {
+                          childBalance = double.parse(walletMap['total_balance'].toString());
+                        } else {
+                          final double s = double.parse((walletMap['save_balance'] ?? 0.0).toString());
+                          final double sp = double.parse((walletMap['spend_balance'] ?? 0.0).toString());
+                          final double sh = double.parse((walletMap['share_balance'] ?? 0.0).toString());
+                          childBalance = s + sp + sh;
+                        }
+                      }
 
                       return Container(
                         decoration: BoxDecoration(
@@ -2240,7 +2509,7 @@ Widget _buildLinkedChildrenSection() {
                                         ? 'Status: Pending Approval Gates'
                                         : pendingCount > 0 
                                             ? '⚠️ Has tasks awaiting proof check' 
-                                            : 'Allowance Status: Active',
+                                            : 'Balance: RM ${childBalance.toStringAsFixed(2)} 🟡', // 🛠️ FIXED: Output formatted currency explicitly 
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
