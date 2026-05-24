@@ -1262,10 +1262,15 @@ Widget _buildConditionalWrapper({required bool isFlexed, required Widget child})
 
   // 📊 Sub-component: Responsive Money Plan Layout (With Legend Below Title) 
 Widget _buildResponsiveCoinPlan({required bool isNarrowScreen, required dynamic wallet}) {
-    // 🪙 Calculate total combined capital dynamically from the distinct buckets
+    // 1. Get the raw unallocated balance (or combined total)
     final double totalBalance = (wallet.spendBalance ?? 0.0) + 
                                 (wallet.saveBalance ?? 0.0) + 
                                 (wallet.shareBalance ?? 0.0);
+
+    // 2. Calculate the 70/20/10 split dynamically so it matches the bottom sheet
+    final double saveAllocated = totalBalance * 0.70;
+    final double spendAllocated = totalBalance * 0.20;
+    final double shareAllocated = totalBalance * 0.10;
 
     // 🏷️ Combined Header: Places Total Balance and legends cleanly below the main title
     final Widget planHeader = Column(
@@ -1315,11 +1320,12 @@ Widget _buildResponsiveCoinPlan({required bool isNarrowScreen, required dynamic 
           ],
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min, // ✅ Enforces tight baseline layouts
+          mainAxisSize: MainAxisSize.min, 
           children: [
-            _buildCapsuleSegment('${wallet.saveBalance.toStringAsFixed(2)} 🟡', const Color(0xFF4ADE80), isLeft: true),
-            _buildCapsuleSegment('${wallet.spendBalance.toStringAsFixed(2)} 🟡', const Color(0xFF60A5FA)),
-            _buildCapsuleSegment('${wallet.shareBalance.toStringAsFixed(2)} 🟡', const Color(0xFFF472B6), isRight: true),
+            // 3. Pass the freshly calculated splits instead of raw model properties
+            _buildCapsuleSegment('${saveAllocated.toStringAsFixed(2)} 🟡', const Color(0xFF4ADE80), isLeft: true),
+            _buildCapsuleSegment('${spendAllocated.toStringAsFixed(2)} 🟡', const Color(0xFF60A5FA)),
+            _buildCapsuleSegment('${shareAllocated.toStringAsFixed(2)} 🟡', const Color(0xFFF472B6), isRight: true),
           ],
         ),
       ),
