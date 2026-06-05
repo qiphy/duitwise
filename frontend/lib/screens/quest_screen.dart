@@ -3,10 +3,14 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async'; // Added for Timer polling
 import 'package:video_player/video_player.dart';
+import 'package:flutter/foundation.dart';
 
 import '../supabase_service.dart';
 import '../models.dart';
 import 'dart:math' as math;
+
+// 🎯 STATE TRACKER: A tracking variable that persists across successive bottom sheet openings
+int? _globalLastServedVideoIndex;
 
 void showInteractiveQuestPopup(BuildContext context, {VoidCallback? onQuestCompleted}) {
   showModalBottomSheet(
@@ -17,7 +21,33 @@ void showInteractiveQuestPopup(BuildContext context, {VoidCallback? onQuestCompl
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
     ),
-    builder: (context) => InteractiveQuestWidget(onCompleted: onQuestCompleted),
+    builder: (context) => Container(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 📦 SWIPE INDICATOR DISMISS HANDLE
+          Container(
+            width: 40,
+            height: 5,
+            decoration: BoxDecoration(
+              color: const Color(0xFFCBD5E1), 
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          Expanded(
+            child: InteractiveQuestWidget(
+              onCompleted: onQuestCompleted,
+              // 🎯 PASS INDEX: Feeds the previous runtime sequence index down into state lifecycle
+              lastVideoIndex: _globalLastServedVideoIndex,
+              onVideoSelected: (index) {
+                _globalLastServedVideoIndex = index; // Lock in the new choice globally
+              },
+            ),
+          ),
+        ],
+      ),
+    ),
   );
 }
 
@@ -38,26 +68,37 @@ class VideoQuizModel {
 }
 
 // 📋 Global static listing of your precise data payloads
-// 🌟 UPDATE THIS BLOCK: Map directly to your public Supabase Storage paths
 final List<VideoQuizModel> eduVideosList = [
   VideoQuizModel(
     assetPath: 'https://tbrefzeytkflqyadayvs.supabase.co/storage/v1/object/public/quest-videos/saving_video.mp4', 
     question: 'What helped the tiger cub get closer to buying the toy rocket ship?',
-    options: ['Wishing on a star.', 'Putting a coin into his spaceship bank every time.'],
+    options: [
+      'Wishing on a star.', 
+      'Putting a coin into his spaceship bank every time.', // Correct
+      'Buying candy every day.'
+    ],
     correctIndex: 1,
     keyLesson: 'When you save a little bit at a time, your money grows until you reach your goal!',
   ),
   VideoQuizModel(
     assetPath: 'https://tbrefzeytkflqyadayvs.supabase.co/storage/v1/object/public/quest-videos/needs_video.mp4',
     question: 'Why did the fox skip buying the shiny balloon?',
-    options: ['He didn\'t have enough coins.', 'He wanted to save his coins for the train ride.'],
-    correctIndex: 1,
+    options: [
+      'He didn\'t have enough coins.', 
+      'He was scared of balloons.',
+      'He wanted to save his coins for the train ride.', // Correct
+    ],
+    correctIndex: 2,
     keyLesson: 'Wants are fun to have, but it is smart to take care of our important plans first!',
   ),
   VideoQuizModel(
     assetPath: 'https://tbrefzeytkflqyadayvs.supabase.co/storage/v1/object/public/quest-videos/account_video.mp4',
     question: 'What does it mean when the gold coin "sprouted" and grew into more coins inside the bank?',
-    options: ['The bank added extra money called "interest" as a reward.', 'The soil in the pot was magical.'],
+    options: [
+      'The bank added extra money called "interest" as a reward.', // Correct
+      'The soil in the pot was magical.',
+      'Someone dropped extra coins by accident.'
+    ],
     correctIndex: 0,
     keyLesson: 'When you keep your money in a savings account, the bank pays you a little bit of extra money called interest!',
   ),
@@ -65,7 +106,15 @@ final List<VideoQuizModel> eduVideosList = [
 
 class InteractiveQuestWidget extends StatefulWidget {
   final VoidCallback? onCompleted;
-  const InteractiveQuestWidget({Key? key, this.onCompleted}) : super(key: key);
+  final int? lastVideoIndex; // 📥 Accept previous tracking index
+  final ValueChanged<int>? onVideoSelected; // 📤 Callback notification hook
+
+  const InteractiveQuestWidget({
+    Key? key, 
+    this.onCompleted,
+    this.lastVideoIndex,
+    this.onVideoSelected,
+  }) : super(key: key);
 
   @override
   State<InteractiveQuestWidget> createState() => _InteractiveQuestWidgetState();
@@ -81,8 +130,9 @@ class _InteractiveQuestWidgetState extends State<InteractiveQuestWidget> {
   Timer? _pollingTimer; // Tracks active status checks
   int _selectedVideoIndex = 0;
 
-  // 🔴 REPLACE WITH YOUR SECURE SECRETS / CONFIG ENVIRONMENT
-  final String _magicHourApiKey = "mhk_live_qC8ClVBf5EJXZqM76GGl6tk52ntBIRKE5FFelpfHb4EgTL0sm1Wd5J7UusxGJOXGpSCf5eFxnf4qwtWe"; 
+  // 🛡️ DYNAMIC INCENTIVE TARGET TUNERS:
+  int _calibratedXpAmount = 100;
+  double _calibratedCoinAmount = 10.00;
 
   @override
   void initState() {
@@ -97,19 +147,44 @@ class _InteractiveQuestWidgetState extends State<InteractiveQuestWidget> {
     super.dispose();
   }
 
-// 🛠️ REPLACE THE ENTIRE OLD _generateDynamicQuestAndVideo FUNCTION WITH THIS:
-Future<void> _generateDynamicQuestAndVideo() async {
+  Future<void> _generateDynamicQuestAndVideo() async {
     try {
       setState(() {
         _isLoading = true;
         _loadingStatusText = "Preparing Your Financial Mission... 📝";
       });
 
-      // 1. Pick a random quiz asset from your global configuration list
-      _selectedVideoIndex = math.Random().nextInt(eduVideosList.length);
+      // 📡 LIVE PARAMETER CALIBRATION: Read target incentives set up by the parent account
+      final String? profileId = supabaseService.currentUserId;
+      if (profileId != null) {
+        final profileMeta = await supabaseService.client
+            .from('profiles')
+            .select('video_xp_reward, video_coin_reward')
+            .eq('id', profileId)
+            .maybeSingle();
+
+        if (profileMeta != null) {
+          _calibratedXpAmount = (profileMeta['video_xp_reward'] as num?)?.toInt() ?? 100;
+          _calibratedCoinAmount = (profileMeta['video_coin_reward'] as num?)?.toDouble() ?? 10.00;
+        }
+      }
+
+      final randomEngine = math.Random();
+      int newSelectionIndex = randomEngine.nextInt(eduVideosList.length);
+
+      if (eduVideosList.length > 1 && widget.lastVideoIndex != null) {
+        while (newSelectionIndex == widget.lastVideoIndex) {
+          newSelectionIndex = randomEngine.nextInt(eduVideosList.length);
+        }
+      }
+
+      if (widget.onVideoSelected != null) {
+        widget.onVideoSelected!(newSelectionIndex);
+      }
+
+      _selectedVideoIndex = newSelectionIndex;
       final activeQuizData = eduVideosList[_selectedVideoIndex];
 
-      // 2. Map the asset data structures into your operational QuestModel
       final localQuest = QuestModel(
         id: "local-asset-quest-$_selectedVideoIndex",
         story: activeQuizData.question,
@@ -117,12 +192,11 @@ Future<void> _generateDynamicQuestAndVideo() async {
         choiceB: activeQuizData.options[1],
         outcomeA: "Awesome choice! 🐯 ${activeQuizData.keyLesson}",
         outcomeB: "Not quite! ${activeQuizData.keyLesson}",
-        rewardXp: 20,
+        rewardXp: _calibratedXpAmount, // Injected user config
       );
 
       final String videoUrlPath = activeQuizData.assetPath;
       
-      // 3. Clean initialization via network URL (Safe for Mobile & Web targets)
       _videoController = VideoPlayerController.networkUrl(
         Uri.parse(videoUrlPath),
       );
@@ -149,23 +223,20 @@ Future<void> _generateDynamicQuestAndVideo() async {
     }
   }
 
-  // 🗑️ YOU CAN COMPLETELY REMOVE THE OLD _pollVideoStatus FUNCTION NOW!
-
-Future<void> _processQuestSelection(int chosenOptionIndex) async {
-    if (_currentQuest == null) return;
-    
-    // 💡 Fetching authenticated session context securely
+  Future<void> _processQuestSelection(int chosenOptionIndex) async {
+    final activeQuizData = eduVideosList[_selectedVideoIndex];
     final String? profileId = supabaseService.currentUserId;
     if (profileId == null) return;
 
-    final activeQuizData = eduVideosList[_selectedVideoIndex];
     final bool isCorrect = chosenOptionIndex == activeQuizData.correctIndex;
-    final String outcomeText = isCorrect ? _currentQuest!.outcomeA : _currentQuest!.outcomeB;
+    
+    final String outcomeText = isCorrect 
+        ? "Awesome choice! 🐯 ${activeQuizData.keyLesson}" 
+        : "Not quite! ${activeQuizData.keyLesson}";
 
     _videoController?.pause(); 
 
-// 1. Display evaluation feedback panel modal immediately with custom bounce animation
-if (mounted) {
+    if (mounted) {
       await showDialog(
         context: context,
         barrierDismissible: false,
@@ -184,20 +255,18 @@ if (mounted) {
                   ),
                   const SizedBox(width: 8),
                   
-                  // 🔥 HIGH-JUICE LIVELY MULTI-TWEEN ANIMATOR
                   if (isCorrect)
                     TweenAnimationBuilder<double>(
                       tween: Tween<double>(begin: 0.0, end: 1.0),
                       duration: const Duration(milliseconds: 800),
-                      curve: Curves.elasticOut, // Explosive snap outwards
+                      curve: Curves.elasticOut,
                       builder: (context, value, child) {
-                        // 🎮 Arcade math formulas for compound motion vectors
                         final double scaleFactor = value < 0.4 
-                            ? (value / 0.4) * 1.4  // Overshoots aggressively to 140% scale early on
-                            : 1.4 - ((value - 0.4) / 0.6) * 0.4; // Springs back smoothly to 100%
+                            ? (value / 0.4) * 1.4  
+                            : 1.4 - ((value - 0.4) / 0.6) * 0.4; 
                             
-                        final double shakeFactor = math.sin(value * 4 * math.pi) * 0.15 * (1.0 - value); // Organic dampening rotational waggle
-                        final double floatUpFactor = (1.0 - value) * -15; // Floats upward 15 pixels during entry
+                        final double shakeFactor = math.sin(value * 4 * math.pi) * 0.15 * (1.0 - value); 
+                        final double floatUpFactor = (1.0 - value) * -15; 
 
                         return Transform.translate(
                           offset: Offset(0, floatUpFactor),
@@ -213,7 +282,6 @@ if (mounted) {
                       child: _buildXpBadge(isCorrect),
                     )
                   else
-                    // Muted subtle fallback animation for incorrect targets
                     TweenAnimationBuilder<double>(
                       tween: Tween<double>(begin: 0.0, end: 1.0),
                       duration: const Duration(milliseconds: 300),
@@ -253,8 +321,11 @@ if (mounted) {
                     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                   ),
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Awesome!', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  onPressed: () => Navigator.pop(context), 
+                  child: Text(
+                    isCorrect ? 'Collect rewards! 🪙' : 'Got it! 👍', 
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
                 )
               ],
             );
@@ -263,31 +334,25 @@ if (mounted) {
       );
     }
 
-    // 2. 💾 DIRECT SUPABASE INTEGRATION ENGINE LAYER
-    // 2. Direct Supabase Mutation Engine
+    // 2. 💾 SUPABASE REWARD INTEGRATION: Commits parent settings to data ledger
     if (isCorrect) {
       try {
-        // Fire off all database tracking logs concurrently
         await Future.wait([
-          // A. Increment the raw wallet coin asset balance
           supabaseService.client.rpc('increment_child_coins', params: {
             'user_id': profileId, 
-            'coin_delta': 0.10
+            'coin_delta': _calibratedCoinAmount
           }),
           
-          // B. Bump child status XP parameters
           supabaseService.client.rpc('increment_child_xp', params: {
             'user_id': profileId, 
-            'xp_delta': 20
+            'xp_delta': _calibratedXpAmount
           }),
           
-          // C. ✅ NEW: Insert a verifiable ledger row into your transactions history stream
-          // This forces the Money Report loop to automatically pick up video earnings as 'Total Earned'
           supabaseService.client.from('transactions').insert({
-            'title': 'Video Question',
+            'title': 'Video Question Milestone',
             'profile_id': profileId,
-            'amount': 0.10, // Positive value means it qualifies as Income/Earned
-            'category': 'Video Reward', // Matches your report string parser criteria
+            'amount': _calibratedCoinAmount, 
+            'category': 'Video Reward', 
             'created_at': DateTime.now().toIso8601String(),
           }),
         ]);
@@ -296,7 +361,6 @@ if (mounted) {
       }
     }
 
-    // 3. Close out layout context frames and fire background state balance refreshes
     if (mounted) {
       Navigator.pop(context);
       if (widget.onCompleted != null) widget.onCompleted!();
@@ -312,12 +376,71 @@ if (mounted) {
       padding: const EdgeInsets.all(24.0),
       child: _isLoading
           ? _buildGamifiedLoader()
-          : AnimatedSwitcher(
-              duration: const Duration(milliseconds: 300),
-              child: _currentStep == 0 
-                  ? _buildVideoPlaybackStage() 
-                  : _buildQuizAssessmentStage(),
+          : Stack(
+              children: [
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 300),
+                  child: _currentStep == 0 
+                      ? _buildVideoPlaybackStage() 
+                      : _buildQuizAssessmentStage(),
+                ),
+                Positioned(
+                  top: 0,
+                  right: 0,
+                  child: IconButton(
+                    icon: const Icon(Icons.cancel_rounded, color: Color(0xFF9CA3AF), size: 28),
+                    tooltip: 'Quit Mission',
+                    onPressed: _showExitConfirmationDialog,
+                  ),
+                ),
+              ],
             ),
+    );
+  }
+
+  void _showExitConfirmationDialog() {
+    _videoController?.pause();
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text('Quit Mission? 🛑', style: TextStyle(fontWeight: FontWeight.bold)),
+        content: const Text(
+          'Are you sure you want to close this mission? You won\'t get your shiny coins or XP points if you leave now!',
+          style: TextStyle(fontSize: 15, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Colors.grey[600]),
+            onPressed: () {
+              Navigator.pop(context); 
+              _videoController?.play(); 
+            },
+            child: const Text('No, Keep Saving!', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              elevation: 0,
+            ),
+            onPressed: () {
+              Navigator.pop(context); 
+              Navigator.pop(this.context); 
+              
+              ScaffoldMessenger.of(this.context).showSnackBar(
+                const SnackBar(
+                  backgroundColor: Colors.black,
+                  content: Text('Too bad! You lost points! Skip missions means slower level ups!'),
+                ),
+              );
+            },
+            child: const Text('Yes, Quit', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
     );
   }
 
@@ -363,7 +486,6 @@ if (mounted) {
           textAlign: TextAlign.center,
           style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
         ),
-        const SizedBox(height: 6),
         const SizedBox(height: 24),
         
         Expanded(
@@ -385,17 +507,6 @@ if (mounted) {
                       ),
                     ),
                   
-                  Positioned(
-                    left: 24,   
-                    right: 24,  
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const SizedBox(height: 12),
-                      ],
-                    ),
-                  ),
-
                   Positioned(
                     bottom: 16,
                     child: Container(
@@ -427,7 +538,7 @@ if (mounted) {
     );
   }
 
-Widget _buildQuizAssessmentStage() {
+  Widget _buildQuizAssessmentStage() {
     final activeQuizData = eduVideosList[_selectedVideoIndex];
 
     return Column(
@@ -459,7 +570,7 @@ Widget _buildQuizAssessmentStage() {
             border: Border.all(color: const Color(0xFFE5E7EB)),
           ),
           child: Text(
-            activeQuizData.question, // Pull directly from safe source mapping
+            activeQuizData.question,
             style: const TextStyle(fontSize: 15, height: 1.5, color: Color(0xFF374151)),
           ),
         ),
@@ -470,26 +581,25 @@ Widget _buildQuizAssessmentStage() {
         ),
         const SizedBox(height: 12),
         
-        // 🛠️ FIX BLOCK: Dynamically map all matching options fields cleanly from your array
         Expanded(
           child: ListView.builder(
             itemCount: activeQuizData.options.length,
-            physics: const NeverScrollableScrollPhysics(),
+            physics: const BouncingScrollPhysics(),
             itemBuilder: (context, index) {
               final String optionText = activeQuizData.options[index];
               
-              // Apply themed coloring tags depending on selection states
-              final bool isEven = index % 2 == 0;
-              final Color backgroundAccent = isEven ? const Color(0xFFEFF6FF) : const Color(0xFFECFDF5);
-              final Color boundaryAccent = isEven ? const Color(0xFFBFDBFE) : const Color(0xFFA7F3D0);
-              final Color textAccent = isEven ? const Color(0xFF1E40AF) : const Color(0xFF065F46);
-              final String indicatorEmoji = index == 0 ? '🅰️' : index == 1 ? '🅱️' : '🆃';
+              const Color backgroundAccent = Color(0xFFEFF6FF); 
+              const Color boundaryAccent = Color(0xFFBFDBFE);   
+              const Color textAccent = Color(0xFF1E40AF);       
+              const Color badgeBgColor = Color(0xFF3B82F6);     
+              
+              final String letterLabel = String.fromCharCode(65 + index); 
 
               return Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(20),
-                  onTap: () => _processQuestSelection(index), // 🪙 Sends precise choice index (0, 1, 2)
+                  onTap: () => _processQuestSelection(index),
                   child: Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
@@ -499,12 +609,28 @@ Widget _buildQuizAssessmentStage() {
                     ),
                     child: Row(
                       children: [
-                        Text(indicatorEmoji, style: const TextStyle(fontSize: 28)),
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: badgeBgColor,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            letterLabel,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
                         const SizedBox(width: 16),
                         Expanded(
                           child: Text(
                             optionText,
-                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: textAccent),
+                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: textAccent),
                           ),
                         ),
                       ],
@@ -519,14 +645,13 @@ Widget _buildQuizAssessmentStage() {
     );
   }
 
-  // 📐 Helper module rendering the core layout style structure of the badge frames
   Widget _buildXpBadge(bool isCorrect) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
         color: isCorrect ? const Color(0xFFFBBF24) : Colors.grey[200],
         gradient: isCorrect ? const LinearGradient(
-          colors: [Color(0xFFFFE17D), Color(0xFFF59E0B)], // Brighter high-contrast yellow gradient profiles
+          colors: [Color(0xFFFFE17D), Color(0xFFF59E0B)], 
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ) : null,
@@ -550,10 +675,10 @@ Widget _buildQuizAssessmentStage() {
           ),
           const SizedBox(width: 4),
           Text(
-            isCorrect ? '+20 XP' : '+0 XP',
+            isCorrect ? '+$_calibratedXpAmount XP' : '+0 XP', // Dynamically calibrated badge text
             style: TextStyle(
               color: isCorrect ? Colors.white : const Color(0xFF4B5563), 
-              fontWeight: FontWeight.bold, // Ultra bold for readability
+              fontWeight: FontWeight.bold, 
               fontSize: 14,
               letterSpacing: 0.5,
               shadows: isCorrect ? [

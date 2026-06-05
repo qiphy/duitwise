@@ -15,6 +15,8 @@ import 'transaction_history_screen.dart';
 import 'money_report_screen.dart';
 import 'package:video_player/video_player.dart';
 import '../services/summary_service.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // 💡 Required for kIsWeb and defaultTargetPlatform
 
 // --- Local Dashboard Data Composition Wrapper ---
 class DashboardData {
@@ -72,10 +74,15 @@ Future<DashboardData> _fetchDashboardTelemetry() async {
     }
 
     try {
-      // 1. Fetch the logged-in user's profile metadata row from Postgres
+      // 1. Fetch the logged-in user's profile metadata row
       final profileDbResponse = await supabaseService.client
           .from('profiles')
-          .select()
+          .select('''
+            *,
+            is_frozen,
+            parental_content_restriction,
+            parent_name:parent_id(username)
+          ''')
           .eq('id', loggedInUserId)
           .maybeSingle();
 
@@ -86,7 +93,7 @@ Future<DashboardData> _fetchDashboardTelemetry() async {
       final profileMetrics = UserModel.fromJson(profileDbResponse as Map<String, dynamic>);
       String targetWalletUserId = loggedInUserId;
 
-      // 🦉 ROLE CHECK: If a Parent is viewing the dashboard, check for their linked child
+      // 🦉 ROLE CHECK: If a Parent is viewing, pivot target context to the linked child
       if (profileMetrics.role == 'parent') {
         final List<dynamic> linkedKids = await supabaseService.client
             .from('profiles')
@@ -96,38 +103,44 @@ Future<DashboardData> _fetchDashboardTelemetry() async {
             .limit(1);
 
         if (linkedKids.isNotEmpty) {
-          // Point the target pointer context to pull the child's wallet row instead!
           targetWalletUserId = linkedKids.first['id'];
         }
       }
 
-      // 2. FETCH the wallet data row DIRECTLY from your 'wallets' database table
-      final List<dynamic> walletRecords = await supabaseService.client
+      // 2. Fetch the wallet data row from the 'wallets' table
+      List<dynamic> walletRecords = await supabaseService.client
           .from('wallets')
-          .select('save_balance, spend_balance, share_balance')
+          .select('total_balance, save_balance, spend_balance, share_balance') // 🎯 FIXED
           .eq('profile_id', targetWalletUserId);
 
-      // Map backend values seamlessly into your frontend WalletModel structure
-      WalletModel walletMetrics;
-      if (walletRecords.isNotEmpty) {
-        final currentWalletData = walletRecords.first;
-        walletMetrics = WalletModel(
-          profileId: targetWalletUserId,
-          saveBalance: (currentWalletData['save_balance'] ?? 0.0).toDouble(),
-          spendBalance: (currentWalletData['spend_balance'] ?? 0.0).toDouble(),
-          shareBalance: (currentWalletData['share_balance'] ?? 0.0).toDouble(),
-        );
-      } else {
-        // Fallback default if a wallet record row doesn't exist yet in PostgreSQL
-        walletMetrics = WalletModel(
-          profileId: targetWalletUserId,
-          saveBalance: 0.00,
-          spendBalance: 0.00,
-          shareBalance: 0.00,
-        );
+      // ⚡ AUTO-PROVISION ENGINE: If no wallet exists, write a default row immediately
+      if (walletRecords.isEmpty) {
+        final Map<String, dynamic> defaultWalletRow = {
+          'profile_id': targetWalletUserId,
+          'total_balance': 0.00,
+          'save_balance': 0.00,
+          'spend_balance': 0.00,
+          'share_balance': 0.00,
+        };
+
+        // Persist default placeholder row structurally straight to PostgreSQL
+        await supabaseService.client.from('wallets').insert(defaultWalletRow);
+
+        // Re-read or simulate the newly minted records array context layout
+        walletRecords = [defaultWalletRow];
       }
 
-      // 💡 AUTOMATION LINK: Parse bank metadata attributes straight into active state fields for parents
+      // Map backend values seamlessly into your frontend WalletModel structure
+      final currentWalletData = walletRecords.first;
+      final walletMetrics = WalletModel(
+        profileId: targetWalletUserId,
+        totalBalance: (currentWalletData['total_balance'] ?? 0.0).toDouble(), // 🎯 FIXED
+        saveBalance: (currentWalletData['save_balance'] ?? 0.0).toDouble(),
+        spendBalance: (currentWalletData['spend_balance'] ?? 0.0).toDouble(),
+        shareBalance: (currentWalletData['share_balance'] ?? 0.0).toDouble(),
+      );
+
+      // AUTOMATION LINK: Parse bank metadata attributes straight into active state fields for parents
       final String? dbBank = profileDbResponse['linked_bank_name'];
       final String? dbAccount = profileDbResponse['bank_account_number'];
       
@@ -240,36 +253,92 @@ Future<DashboardData> _fetchDashboardTelemetry() async {
     );
   }
 
-  // --- Enhanced Parent Control Sheet: Task Validation & Household Disconnection ---
-  Future<void> _showParentTaskManagerBottomSheet(String childName, String childId) async {
-    await showModalBottomSheet(
+// --- Enhanced Parent Control Sheet: Dual Task & Goal Management Hub ---
+int _selectedTabIdx = 0; 
+
+Future<void> _showParentTaskManagerBottomSheet(String childName, String childId) async {
+    // 🛡️ State variables for configuration and visibility controls
+    bool isLoadingConfig = true;
+    bool isAccountFrozen = false;
+    bool restrictVisibility = false;
+    bool showSettings = false; // ⚙️ Tracks whether settings are taking over the view channel
+
+    // 🎬 REWARD MANAGEMENT STATE HOOKS:
+    int currentVideoXp = 100;
+    double currentVideoCoins = 10.00;
+
+    // ✏️ Text Editing Controllers to handle text input fields seamlessly
+    final TextEditingController xpController = TextEditingController();
+    final TextEditingController coinsController = TextEditingController();
+    final GlobalKey<FormState> settingsFormKey = GlobalKey<FormState>();
+
+    // 🧠 Await the closing response of the modal layout sheet frame channel
+    final bool? shouldRefresh = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
+      isDismissible: true, 
+      enableDrag: true,    
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (context) {
         return StatefulBuilder( 
           builder: (BuildContext context, StateSetter setModalState) {
+            
+            // 📡 ASYNC INITIALIZATION: Pull current child guardrail settings dynamically from backend
+            if (isLoadingConfig) {
+              supabaseService.client
+                  .from('profiles')
+                  .select('is_frozen, parental_content_restriction, video_xp_reward, video_coin_reward')
+                  .eq('id', childId)
+                  .maybeSingle()
+                  .then((snapshot) {
+                    if (snapshot != null && context.mounted) {
+                      setModalState(() {
+                        isAccountFrozen = snapshot['is_frozen'] ?? false;
+                        restrictVisibility = snapshot['parental_content_restriction'] ?? false;
+                        currentVideoXp = (snapshot['video_xp_reward'] as num?)?.toInt() ?? 100;
+                        currentVideoCoins = (snapshot['video_coin_reward'] as num?)?.toDouble() ?? 10.00;
+                        
+                        // Sync database truth into controllers exactly once on load
+                        xpController.text = currentVideoXp.toString();
+                        coinsController.text = currentVideoCoins.toStringAsFixed(2);
+                        
+                        isLoadingConfig = false;
+                      });
+                    }
+                  });
+            }
+
             return Container(
               height: MediaQuery.of(context).size.height * 0.85,
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.only(top: 12, left: 24, right: 24, bottom: 24), 
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // --- UPDATED HEADER BLOCK: Live Balance Tracker, Rectangle Download Button, & Inline Transfer Action ---
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 5,
+                      margin: const EdgeInsets.only(bottom: 20), 
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFCBD5E1), 
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+
+                  // --- 1. HEADER CONTROL PAD BLOCK ---
                   FutureBuilder<List<dynamic>>(
                     future: supabaseService.client
                         .from('wallets')
                         .select('total_balance, save_balance, spend_balance, share_balance')
-                        .eq('profile_id', childId), // Uses the specific childId of the tapped card
+                        .eq('profile_id', childId),
                     builder: (context, walletSnapshot) {
                       final walletData = walletSnapshot.data ?? [];
-                      
                       double currentTotal = 0.00;
                       if (walletData.isNotEmpty) {
                         if (walletData.first['total_balance'] != null) {
                           currentTotal = double.parse(walletData.first['total_balance'].toString());
                         } else {
-                          // Structural fallback calculation if total_balance field is null
                           final double s = double.parse((walletData.first['save_balance'] ?? 0.0).toString());
                           final double sp = double.parse((walletData.first['spend_balance'] ?? 0.0).toString());
                           final double sh = double.parse((walletData.first['share_balance'] ?? 0.0).toString());
@@ -277,308 +346,340 @@ Future<DashboardData> _fetchDashboardTelemetry() async {
                         }
                       }
 
-                      return Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('$childName\'s Missions 🎯', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Balance: RM ${currentTotal.toStringAsFixed(2)} 🟡',
-                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF8B5CF6)),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
+                      return LayoutBuilder(
+                        builder: (context, constraints) {
+                          final bool isNarrow = constraints.maxWidth < 600;
+
+                          return Wrap(
+                            spacing: 16,
+                            runSpacing: 16,
+                            alignment: WrapAlignment.spaceBetween,
+                            crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
-                              // 📥 INJECTED ACTION: Rectangle Monthly Financial Statement Downloader Button
-ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF8B5CF6), // Purple color accent for structural separation
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                  elevation: 0,
+                              ConstrainedBox(
+                                constraints: BoxConstraints(
+                                  maxWidth: isNarrow ? constraints.maxWidth : constraints.maxWidth * 0.45,
                                 ),
-                                icon: const Icon(Icons.download_rounded, color: Colors.white, size: 16),
-                                label: const Text('Download Monthly Report', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                                onPressed: () async {
-                                  Navigator.pop(context); // Dismiss current sheet framework layer
-                                  
-                                  // 1. Trigger the processing feedback snackbar immediately
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Row(
-                                        children: [
-                                          const SizedBox(
-                                            width: 16, height: 16,
-                                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Flexible(
+                                          child: Text(
+                                            showSettings ? 'Settings: $childName ⚙️' : '$childName\'s Hub 🚀', 
+                                            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
                                           ),
-                                          const SizedBox(width: 16),
-                                          Text('Generating monthly report statement for $childName...'),
-                                        ],
-                                      ),
-                                      duration: const Duration(seconds: 3),
-                                    ),
-                                  );
-
-                                  // 2. Package current metrics into the required WalletModel structure 
-                                  final WalletModel childWalletContext = WalletModel(
-                                    profileId: childId,
-                                    saveBalance: currentTotal * 0.70,
-                                    spendBalance: currentTotal * 0.20,
-                                    shareBalance: currentTotal * 0.10,
-                                  );
-
-                                  // 3. Fire the SummaryService pipeline passing the childName string vector context
-                                  try {
-                                    await SummaryService().generateAndDownloadReport(
-                                      context, 
-                                      childWalletContext,
-                                      childName, // ✅ FIXED: Passed childName parameter safely
-                                    );
-                                    
-                                    // Clear generation status loader once printing system takes over
-                                    if (context.mounted) {
-                                      ScaffoldMessenger.of(context).clearSnackBars();
-                                    }
-                                  } catch (e) {
-                                    if (context.mounted) {
-                                      ScaffoldMessenger.of(context).clearSnackBars();
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(
-                                          backgroundColor: Colors.redAccent,
-                                          content: Text('Failed to compile document: $e'),
                                         ),
-                                      );
-                                    }
-                                  }
-                                },
-                              ),
-                              const SizedBox(width: 8),
-                              ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF10B981),
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                  elevation: 0,
+                                        const SizedBox(width: 4),
+                                        IconButton(
+                                          icon: Icon(
+                                            showSettings ? Icons.close_rounded : Icons.settings_outlined,
+                                            color: const Color(0xFF8B5CF6),
+                                            size: 22,
+                                          ),
+                                          onPressed: () {
+                                            setModalState(() => showSettings = !showSettings);
+                                          },
+                                          tooltip: 'Toggle Parental Control Restrictions Settings',
+                                          constraints: const BoxConstraints(),
+                                          padding: const EdgeInsets.all(4),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'Balance: RM ${currentTotal.toStringAsFixed(2)} 🟡',
+                                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF8B5CF6)),
+                                    ),
+                                  ],
                                 ),
-                                icon: const Icon(Icons.send_rounded, color: Colors.white, size: 16),
-                                label: const Text('Transfer', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                                onPressed: () {
-                                  Navigator.pop(context);
-                                  _showTransferMoneyBottomSheet(childName, childId);
-                                },
+                              ),
+                              Container(
+                                width: isNarrow ? constraints.maxWidth : constraints.maxWidth * 0.50,
+                                alignment: isNarrow ? Alignment.centerLeft : Alignment.centerRight,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    ElevatedButton.icon(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: const Color(0xFF8B5CF6),
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                        elevation: 0,
+                                      ),
+                                      icon: const Icon(Icons.download_rounded, color: Colors.white, size: 16),
+                                      label: const Text('Download Monthly Report', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                                      onPressed: () async {
+                                        Navigator.pop(context, true); 
+                                        
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(
+                                            content: Row(
+                                              children: [
+                                                const SizedBox(
+                                                  width: 16, height: 16,
+                                                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                                                ),
+                                                const SizedBox(width: 16),
+                                                Text('Generating monthly report statement for $childName...'),
+                                              ],
+                                            ),
+                                            duration: const Duration(seconds: 3),
+                                          ),
+                                        );
+
+                                        final WalletModel childWalletContext = WalletModel(
+                                          profileId: childId,
+                                          totalBalance: currentTotal,
+                                          saveBalance: currentTotal * 0.70,
+                                          spendBalance: currentTotal * 0.20,
+                                          shareBalance: currentTotal * 0.10,
+                                        );
+
+                                        try {
+                                          await SummaryService().generateAndDownloadReport(
+                                            context, 
+                                            childWalletContext,
+                                            childName,
+                                          );
+                                          if (context.mounted) {
+                                            ScaffoldMessenger.of(context).clearSnackBars();
+                                          }
+                                        } catch (e) {
+                                          if (context.mounted) {
+                                            ScaffoldMessenger.of(context).clearSnackBars();
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              SnackBar(
+                                                backgroundColor: Colors.redAccent,
+                                                content: Text('Failed to compile document: $e'),
+                                              ),
+                                            );
+                                          }
+                                        }
+                                      },
+                                    ),
+                                    const SizedBox(width: 8),
+                                    ElevatedButton.icon(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: const Color(0xFF10B981),
+                                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                        elevation: 0,
+                                      ),
+                                      icon: const Icon(Icons.send_rounded, color: Colors.white, size: 16),
+                                      label: const Text('Transfer', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                                      onPressed: () {
+                                        Navigator.pop(context, true); 
+                                        _showTransferMoneyBottomSheet(childName, childId);
+                                      },
+                                    ),
+                                  ],
+                                ),
                               ),
                             ],
-                          ),
-                        ],
+                          );
+                        },
                       );
                     },
                   ),
-                  const SizedBox(height: 16),
-                  
-                  // Active Task Tracker Stream
+                  const SizedBox(height: 20),
+
+                  // --- 2. 🔀 DYNAMIC BODY EXCLUSION ROUTER ---
                   Expanded(
-                    child: FutureBuilder<List<dynamic>>(
-                      future: supabaseService.client
-                          .from('tasks')
-                          .select('id, title, reward_amount, status, proof_url, assigned_at')
-                          .eq('profile_id', childId) 
-                          .order('id', ascending: false),
-                      builder: (context, taskSnapshot) {
-                        if (taskSnapshot.connectionState == ConnectionState.waiting) {
-                          return const Center(child: CircularProgressIndicator(color: Color(0xFF8B5CF6)));
-                        }
-                        
-                        final tasks = taskSnapshot.data ?? [];
-                        if (tasks.isEmpty) {
-                          return const Center(
-                            child: Text(
-                              'No missions assigned yet.\nTap "Add Task" below to start!',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(color: Colors.grey, height: 1.4, fontWeight: FontWeight.w500),
-                            ),
-                          );
-                        }
-
-                        return ListView.builder(
-                          itemCount: tasks.length,
-                          physics: const BouncingScrollPhysics(),
-                          itemBuilder: (context, idx) {
-                            final t = tasks[idx];
-                            final String taskId = t['id'].toString();
-                            final String title = t['title'] ?? 'Secret Mission';
-                            final double reward = (t['reward_amount'] ?? 0.0).toDouble();
-                            final String status = t['status'] ?? 'assigned';
-                            final String? proofUrl = t['proof_url'];
-                            final String rawDate = t['assigned_at'] ?? '';
-                            final String assignedDate = rawDate.isNotEmpty 
-                                ? DateTime.parse(rawDate).toLocal().toString().split(' ')[0] 
-                                : 'Recent';
-
-                            final bool isPending = status == 'pending';
-
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              padding: const EdgeInsets.all(16),
-                              decoration: BoxDecoration(
-                                color: isPending ? const Color(0xFFFFF7ED) : const Color(0xFFF9FAFB),
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(color: isPending ? const Color(0xFFFFEDD5) : Colors.transparent, width: 1.5),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 250),
+                      child: (showSettings && !isLoadingConfig)
+                          ? Form(
+                              key: settingsFormKey,
+                              child: ListView(
+                                key: const ValueKey('parent_settings_view'),
+                                physics: const BouncingScrollPhysics(),
                                 children: [
-                                  // Top Row: Title, Reward Info, and the Delete Trash Icon
-                                  Row(
-                                    crossAxisAlignment: CrossAxisAlignment.center,
+                                  const Padding(
+                                    padding: EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
+                                    child: Text('Safety Guardrails 🔐', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1F2937))),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  CheckboxListTile(
+                                    title: const Text('Freeze Wallet', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF374151))),
+                                    subtitle: const Text('Instantly blocks outbound merchant payments and dynamic fun-budget disbursements.', style: TextStyle(fontSize: 11)),
+                                    value: isAccountFrozen,
+                                    activeColor: const Color(0xFF8B5CF6),
+                                    controlAffinity: ListTileControlAffinity.leading,
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                                    onChanged: (val) async {
+                                      setModalState(() => isAccountFrozen = val ?? false);
+                                      await supabaseService.client.from('profiles').update({'is_frozen': isAccountFrozen}).eq('id', childId);
+                                    },
+                                  ),
+                                  const Divider(color: Color(0xFFF1F5F9)),
+                                  CheckboxListTile(
+                                    title: const Text('Restrict Feed Content', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF374151))),
+                                    subtitle: const Text('Simplifies application layout parameters; hides experimental transaction models.', style: TextStyle(fontSize: 11)),
+                                    value: restrictVisibility,
+                                    activeColor: const Color(0xFF8B5CF6),
+                                    controlAffinity: ListTileControlAffinity.leading,
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                                    onChanged: (val) async {
+                                      setModalState(() => restrictVisibility = val ?? false);
+                                      await supabaseService.client.from('profiles').update({'parental_content_restriction': restrictVisibility}).eq('id', childId);
+                                    },
+                                  ),
+                                  const Divider(color: Color(0xFFF1F5F9)),
+                                  
+                                  // 🎬 QUEST CALIBRATION INTERFACE ELEMENTS (TYPING VARIANT)
+                                  const Padding(
+                                    padding: EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
+                                    child: Text('Quest Incentive Calibration 🎞️', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1F2937))),
+                                  ),
+                                  const SizedBox(height: 8),
+
+                                  // ✏️ TYPE FIELD 1: DYNAMIC XP REWARD
+                                  TextFormField(
+                                    controller: xpController,
+                                    keyboardType: TextInputType.number,
+                                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                                    decoration: InputDecoration(
+                                      labelText: 'Video Quest XP Payout',
+                                      suffixText: 'XP',
+                                      prefixIcon: const Icon(Icons.bolt_rounded, color: Color(0xFF8B5CF6), size: 20),
+                                      filled: true,
+                                      fillColor: const Color(0xFFF9FAFB),
+                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                    ),
+                                    onChanged: (val) async {
+                                      final parsedXp = int.tryParse(val.trim());
+                                      if (parsedXp != null && parsedXp >= 0) {
+                                        currentVideoXp = parsedXp;
+                                        await supabaseService.client.from('profiles').update({'video_xp_reward': currentVideoXp}).eq('id', childId);
+                                      }
+                                    },
+                                  ),
+                                  const SizedBox(height: 16),
+
+                                  // ✏️ TYPE FIELD 2: DYNAMIC ALLOWANCE REWARD
+                                  TextFormField(
+                                    controller: coinsController,
+                                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                                    decoration: InputDecoration(
+                                      labelText: 'Allowance Coin Reward',
+                                      prefixText: 'RM ',
+                                      prefixIcon: const Icon(Icons.payments_rounded, color: Color(0xFF10B981), size: 20),
+                                      filled: true,
+                                      fillColor: const Color(0xFFF9FAFB),
+                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                    ),
+                                    onChanged: (val) async {
+                                      final parsedCoins = double.tryParse(val.trim());
+                                      if (parsedCoins != null && parsedCoins >= 0.0) {
+                                        currentVideoCoins = parsedCoins;
+                                        await supabaseService.client.from('profiles').update({'video_coin_reward': currentVideoCoins}).eq('id', childId);
+                                      }
+                                    },
+                                  ),
+                                  const SizedBox(height: 8),
+                                ],
+                              ),
+                            )
+                          : Column(
+                              key: const ValueKey('feeds_dashboard_view'),
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // --- Hub Segmented Navigation Tab Selection Switcher ---
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF3F4F6),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Row(
                                     children: [
                                       Expanded(
-                                        child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              title, 
-                                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF1F2937))
+                                        child: InkWell(
+                                          onTap: () => setModalState(() => _selectedTabIdx = 0),
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(vertical: 10),
+                                            decoration: BoxDecoration(
+                                              color: _selectedTabIdx == 0 ? Colors.white : Colors.transparent,
+                                              borderRadius: BorderRadius.circular(10),
+                                              boxShadow: _selectedTabIdx == 0 ? [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2))] : [],
                                             ),
-                                            const SizedBox(height: 4),
-                                            Row(
-                                              children: [
-                                                Text(
-                                                  'Reward: RM ${reward.toStringAsFixed(2)} 🟡', 
-                                                  style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF10B981), fontSize: 13)
-                                                ),
-                                                const SizedBox(width: 12),
-                                                Icon(Icons.calendar_today_rounded, size: 12, color: Colors.grey[400]),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                  assignedDate,
-                                                  style: TextStyle(color: Colors.grey[500], fontSize: 12, fontWeight: FontWeight.w500),
-                                                ),
-                                              ],
+                                            alignment: Alignment.center,
+                                            child: Text(
+                                              'Tasks 🎯',
+                                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: _selectedTabIdx == 0 ? const Color(0xFF8B5CF6) : Colors.grey[600]),
                                             ),
-                                          ],
+                                          ),
                                         ),
                                       ),
-                                      IconButton(
-                                        icon: Icon(Icons.delete_outline_rounded, color: Colors.red[400], size: 22),
-                                        tooltip: 'Delete this task entirely',
-                                        onPressed: () async {
-                                          await _handleDeleteTask(taskId, title);
-                                          setModalState(() {}); 
-                                          _refreshData();       
-                                        },
+                                      Expanded(
+                                        child: InkWell(
+                                          onTap: () => setModalState(() => _selectedTabIdx = 1),
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(vertical: 10),
+                                            decoration: BoxDecoration(
+                                              color: _selectedTabIdx == 1 ? Colors.white : Colors.transparent,
+                                              borderRadius: BorderRadius.circular(10),
+                                              boxShadow: _selectedTabIdx == 1 ? [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2))] : [],
+                                            ),
+                                            alignment: Alignment.center,
+                                            child: Text(
+                                              'Saving Goals 💎',
+                                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: _selectedTabIdx == 1 ? const Color(0xFF8B5CF6) : Colors.grey[600]),
+                                            ),
+                                          ),
+                                        ),
                                       ),
                                     ],
                                   ),
-                                  
-                                  // 📷 PHOTO PROOF ELEMENT: Injected directly for validation visibility
-                                  if (proofUrl != null && proofUrl.isNotEmpty) ...[
-                                    const SizedBox(height: 12),
-                                    const Text('Task Completion Proof:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF4B5563))),
-                                    const SizedBox(height: 6),
-                                    ClipRRect(
-                                      borderRadius: BorderRadius.circular(12),
-                                      child: GestureDetector(
-                                        onTap: () => _showFullImagePreview(proofUrl),
-                                        child: Stack(
-                                          alignment: Alignment.bottomRight,
-                                          children: [
-                                            Image.network(
-                                              proofUrl,
-                                              height: 160,
-                                              width: double.infinity,
-                                              fit: BoxFit.cover,
-                                              errorBuilder: (c, e, s) => Container(
-                                                height: 60,
-                                                color: const Color(0xFFF3F4F6),
-                                                child: const Center(child: Text('⚠️ Image display failure')),
-                                              ),
-                                            ),
-                                            Container(
-                                              margin: const EdgeInsets.all(8),
-                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                              decoration: BoxDecoration(color: Colors.black.withOpacity(0.6), borderRadius: BorderRadius.circular(6)),
-                                              child: const Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  Icon(Icons.fullscreen_rounded, color: Colors.white, size: 14),
-                                                  SizedBox(width: 2),
-                                                  Text('Zoom', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                                                ],
-                                              ),
-                                            )
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-
-                                  const SizedBox(height: 12),
-
-                                  // Bottom Action Row: Status Chip and Dynamic Parent Decision Buttons
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Chip(
-                                        label: Text(status.toUpperCase(), style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
-                                        backgroundColor: isPending ? Colors.orange[100] : (status == 'completed' ? Colors.green[100] : Colors.blue[100]),
-                                        side: BorderSide.none,
-                                      ),
-                                      if (isPending)
-                                        Row(
-                                          children: [
-                                            // ❌ REJECT TEXT ACTUATOR ACTION BUTTON
-                                            TextButton.icon(
-                                              style: TextButton.styleFrom(foregroundColor: Colors.red[600]),
-                                              icon: const Icon(Icons.cancel_outlined, size: 16),
-                                              label: const Text('Reject', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                                              onPressed: () async {
-                                                await _rejectTaskProof(taskId, title);
-                                                setModalState(() {});
-                                                _refreshData();
-                                              },
-                                            ),
-                                            const SizedBox(width: 8),
-                                            // ✅ APPROVE & DISBURSE DISPATCH BUTTON
-                                            ElevatedButton.icon(
-                                              style: ElevatedButton.styleFrom(
-                                                backgroundColor: const Color(0xFF16A34A),
-                                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                                elevation: 0,
-                                              ),
-                                              icon: const Icon(Icons.check_circle, size: 16, color: Colors.white),
-                                              label: const Text('Approve & Pay', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                                              onPressed: () async {
-                                                await _approveTaskAndDisburseFunds(taskId, childId, reward, title);
-                                                setModalState(() {}); 
-                                                _refreshData();       
-                                              },
-                                            ),
-                                          ],
-                                        ),
-                                    ],
-                                  )
-                                ],
-                              ),
-                            );
-                          },
-                        );
-                      },
+                                ),
+                                const SizedBox(height: 16),
+                                
+                                // --- Tasks vs Goals Stream Injection Area ---
+                                Expanded(
+                                  child: AnimatedSwitcher(
+                                    duration: const Duration(milliseconds: 200),
+                                    child: _selectedTabIdx == 0 
+                                        ? _buildTasksTabFeed(childId, setModalState) 
+                                        : _buildGoalsTabFeed(childId, setModalState),
+                                  ),
+                                ),
+                              ],
+                            ),
                     ),
                   ),
                   
                   const SizedBox(height: 16),
                   
-                  // BOTTOM ACTION ROW: Household controllers
+                  // --- 3. BOTTOM ACTION ROW ---
                   Row(
                     children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF8B5CF6),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            elevation: 0,
+                          ),
+                          icon: const Icon(Icons.add_task_rounded, color: Colors.white, size: 18),
+                          label: const Text('Assign Mission', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                          onPressed: () {
+                            Navigator.pop(context, true); 
+                            _showAddTaskBottomSheet(childName, childId); 
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: OutlinedButton.icon(
                           style: OutlinedButton.styleFrom(
@@ -591,25 +692,8 @@ ElevatedButton.icon(
                           onPressed: () async {
                             final bool removed = await _handleRemoveChildFromHousehold(childId, childName);
                             if (removed && context.mounted) {
-                              Navigator.pop(context); 
+                              Navigator.pop(context, true); 
                             }
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF8B5CF6),
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            elevation: 0,
-                          ),
-                          icon: const Icon(Icons.add_rounded, color: Colors.white, size: 18),
-                          label: const Text('Add Task', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                          onPressed: () {
-                            Navigator.pop(context); 
-                            _showAddTaskBottomSheet(childName, childId); 
                           },
                         ),
                       ),
@@ -622,6 +706,434 @@ ElevatedButton.icon(
         );
       },
     );
+
+    // 🎯 THE CONDITIONAL TELEMETRY CHECK:
+    if (shouldRefresh == true) {
+      debugPrint('🔄 Fired action button: Executing dynamic background synchronization refresh...');
+      _refreshData();
+    } else {
+      debugPrint('🤫 Swiped down/dismissed without action: Absolute silent close.');
+    }
+}
+
+// 🎯 📝 SUB-MODULE: Render Tasks List (Tab 0) - Fully Fixed for Parents & Kids
+Widget _buildTasksTabFeed(String childId, StateSetter setModalState) {
+    return FutureBuilder<List<dynamic>>(
+      key: const ValueKey('tasks_tab_stream'),
+      future: () async {
+        // 🔬 DIAGNOSTIC LOG
+        debugPrint('🔍 PARENT OVERLAY: Fetching tasks for childId: $childId');
+        final res = await supabaseService.client
+            .from('tasks')
+            .select('*')
+            .eq('profile_id', childId)
+            .order('id', ascending: false);
+        debugPrint('🎯 PARENT OVERLAY: Tasks returned count: ${res.length} payload: $res');
+        return res;
+      }(),
+      builder: (context, taskSnapshot) {
+        if (taskSnapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator(color: Color(0xFF8B5CF6)));
+        }
+        final tasks = taskSnapshot.data ?? [];
+        if (tasks.isEmpty) {
+          return const Center(
+            child: Text('No missions assigned yet.', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w500)),
+          );
+        }
+
+        return ListView.builder(
+          itemCount: tasks.length,
+          physics: const BouncingScrollPhysics(),
+          itemBuilder: (context, idx) {
+            final t = tasks[idx];
+            final String taskId = t['id'].toString();
+            final String title = t['title'] ?? 'Secret Mission';
+            final double reward = (t['reward_amount'] ?? 0.0).toDouble();
+            final String status = t['status'] ?? 'assigned';
+            final String? proofUrl = t['proof_url']; 
+
+            final bool isPending = status == 'pending';
+            final bool isCompleted = status == 'completed';
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: isPending ? const Color(0xFFFFF7ED) : const Color(0xFFF9FAFB),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: isPending ? const Color(0xFFFFEDD5) : Colors.transparent, width: 1.5),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                            const SizedBox(height: 4),
+                            Text('Reward: RM ${reward.toStringAsFixed(2)} 🟡', style: const TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ),
+                      if (!isCompleted)
+                        IconButton(
+                          icon: Icon(Icons.delete_outline_rounded, color: Colors.red[400]),
+                          onPressed: () async {
+                            await _handleDeleteTask(taskId, title);
+                            // 🎯 DISMISS WITH REFRESH SIGNAL
+                            if (context.mounted) Navigator.pop(context, true);
+                          },
+                        )
+                      else
+                        Icon(Icons.lock_outline_rounded, color: Colors.grey[400]),
+                    ],
+                  ),
+
+                  // 📷 PHOTO PROOF ELEMENT
+                  if (proofUrl != null && proofUrl.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    const Text('Task Completion Proof:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF4B5563))),
+                    const SizedBox(height: 6),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: GestureDetector(
+                        onTap: () => _showFullImagePreview(proofUrl),
+                        child: Stack(
+                          alignment: Alignment.bottomRight,
+                          children: [
+                            Image.network(
+                              proofUrl,
+                              height: 160,
+                              width: double.infinity,
+                              fit: BoxFit.cover,
+                              errorBuilder: (c, e, s) => Container(
+                                height: 60,
+                                color: const Color(0xFFF3F4F6),
+                                child: const Center(child: Text('⚠️ Image display failure')),
+                              ),
+                            ),
+                            Container(
+                              margin: const EdgeInsets.all(8),
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(color: Colors.black.withOpacity(0.6), borderRadius: BorderRadius.circular(6)),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.fullscreen_rounded, color: Colors.white, size: 14),
+                                  SizedBox(width: 2),
+                                  Text('Zoom', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            )
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+
+                  // Action approval buttons if task status is pending
+                  if (isPending) ...[
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton.icon(
+                          style: TextButton.styleFrom(foregroundColor: Colors.red[600]),
+                          icon: const Icon(Icons.cancel_outlined, size: 16),
+                          label: const Text('Reject', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                          onPressed: () async {
+                            await _rejectTaskProof(taskId, title);
+                            // 🎯 DISMISS WITH REFRESH SIGNAL
+                            if (context.mounted) Navigator.pop(context, true);
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF16A34A),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            elevation: 0,
+                          ),
+                          icon: const Icon(Icons.check_circle, size: 16, color: Colors.white),
+                          label: const Text('Approve & Pay', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                          onPressed: () async {
+                            await _approveTaskAndDisburseFunds(taskId, childId, reward, title);
+                            // 🎯 DISMISS WITH REFRESH SIGNAL
+                            if (context.mounted) Navigator.pop(context, true);
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildGoalsTabFeed(String childId, StateSetter setModalState) {
+    return FutureBuilder<List<dynamic>>(
+      key: const ValueKey('goals_tab_stream'),
+      future: () async {
+        return await supabaseService.client
+            .from('savings_goals')
+            .select('*')
+            .eq('profile_id', childId)
+            .order('id', ascending: false);
+      }(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator(color: Color(0xFF8B5CF6)));
+        }
+
+        final allGoals = snapshot.data ?? [];
+
+        if (allGoals.isEmpty) {
+          return const Center(
+            child: Text('No saving goals set up yet.', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w500)),
+          );
+        }
+
+        final activeGoals = allGoals.where((g) => g['status'] == 'active' || g['status'] == 'pending_approval').toList();
+        final historicGoals = allGoals.where((g) => g['status'] == 'achieved' || g['status'] == 'completed').toList();
+
+        return ListView(
+          physics: const BouncingScrollPhysics(),
+          children: [
+            if (activeGoals.isNotEmpty) ...[
+              const Text('Current Active Target 🎯', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF4B5563))),
+              const SizedBox(height: 8),
+              ...activeGoals.map((g) {
+                final String goalId = g['id'].toString();
+                final String goalName = g['goal_name'] ?? 'Savings Goal';
+                final double targetPrice = (g['target_amount'] ?? 0.0).toDouble();
+                final bool isPending = g['status'] == 'pending_approval';
+
+                return FutureBuilder<Map<String, dynamic>?>(
+                  future: supabaseService.client
+                      .from('wallets')
+                      .select('save_balance')
+                      .eq('profile_id', childId)
+                      .maybeSingle(),
+                  builder: (context, walletSnapshot) {
+                    final walletData = walletSnapshot.data;
+                    final double currentSaved = walletData != null 
+                        ? (walletData['save_balance'] ?? 0.00).toDouble() 
+                        : 0.00;
+
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 20),
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: isPending ? const Color(0xFFFFF7ED) : const Color(0xFFF9FAFB),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: isPending ? const Color(0xFFFFEDD5) : const Color(0xFFE5E7EB), width: 1.5),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  isPending ? '✨ Proposed: $goalName' : goalName,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold, 
+                                    fontSize: 16, 
+                                    color: isPending ? const Color(0xFFC2410C) : const Color(0xFF1F2937),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'RM ${targetPrice.toStringAsFixed(2)}', 
+                                style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF2563EB)),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              Text(
+                                'Progress: RM ${currentSaved.toStringAsFixed(2)} saved',
+                                style: TextStyle(color: Colors.grey[600], fontSize: 13, fontWeight: FontWeight.w500),
+                              ),
+                              const SizedBox(width: 6),
+                              Text('•', style: TextStyle(color: Colors.grey[400])),
+                              const SizedBox(width: 6),
+                              Text(
+                                '${targetPrice > 0 ? ((currentSaved / targetPrice) * 100).toStringAsFixed(0) : 0}% Completed',
+                                style: const TextStyle(color: Color(0xFF8B5CF6), fontSize: 13, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                          
+                          if (!isPending) ...[
+                            const SizedBox(height: 14),
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: g['status'] == 'achieved' 
+                                    ? const Color(0xFF94A3B8) 
+                                    : const Color(0xFF10B981), 
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 10),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                elevation: 0,
+                              ),
+                              icon: Icon(
+                                g['status'] == 'achieved' ? Icons.check_circle_outline_rounded : Icons.stars_rounded, 
+                                size: 16
+                              ),
+                              label: Text(
+                                g['status'] == 'achieved' ? 'Achieved' : 'Mark as Achieved! 🏆', 
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                              ),
+                              onPressed: g['status'] == 'achieved' 
+                                  ? null 
+                                  : () async {
+                                      await _handleMarkGoalAsAchieved(goalId, goalName);
+                                      // 🎯 DISMISS WITH REFRESH SIGNAL
+                                      if (context.mounted) Navigator.pop(context, true);
+                                    },
+                            ),
+                          ],
+                          if (isPending) ...[
+                            const SizedBox(height: 14),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                OutlinedButton.icon(
+                                  style: OutlinedButton.styleFrom(
+                                    side: const BorderSide(color: Color(0xFFEF4444), width: 1.5),
+                                    foregroundColor: const Color(0xFFEF4444),
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                  ),
+                                  icon: const Icon(Icons.close_rounded, size: 14),
+                                  label: const Text('Reject', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                  onPressed: () async {
+                                    await supabaseService.client
+                                        .from('savings_goals')
+                                        .delete()
+                                        .eq('id', goalId);
+                                        
+                                    // 🎯 DISMISS WITH REFRESH SIGNAL
+                                    if (context.mounted) Navigator.pop(context, true);
+                                    
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          backgroundColor: Color(0xFFEF4444),
+                                          content: Text('Goal request rejected and removed.'),
+                                        ),
+                                      );
+                                    }
+                                  },
+                                ),
+                                const SizedBox(width: 8),
+                                
+                                ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF16A34A),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                    elevation: 0,
+                                  ),
+                                  icon: const Icon(Icons.check_rounded, size: 14),
+                                  label: const Text('Approve New Goal', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                  onPressed: () async {
+                                    await supabaseService.client.from('savings_goals').update({'status': 'active'}).eq('id', goalId);
+                                    await supabaseService.client.from('wallets').update({'save_balance': 0.00}).eq('profile_id', childId);
+                                    
+                                    // 🎯 DISMISS WITH REFRESH SIGNAL
+                                    if (context.mounted) Navigator.pop(context, true);
+                                  },
+                                ),
+                              ],
+                            )
+                          ]
+                        ],
+                      ),
+                    );
+                  },
+                );
+              }).toList(),
+            ] else ...[
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Text('No active target right now.', style: TextStyle(color: Colors.grey, fontSize: 13)),
+                ),
+              ),
+            ],
+
+            if (historicGoals.isNotEmpty) ...[
+              const Divider(height: 32, color: Color(0xFFE5E7EB)),
+              const Text('Achieved Dreams Vault 🏆', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF10B981))),
+              const SizedBox(height: 8),
+              ...historicGoals.map((g) {
+                final String goalName = g['goal_name'] ?? 'Past Goal';
+                final double targetPrice = (g['target_amount'] ?? 0.0).toDouble();
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFECFDF5),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xD1A7F3D0), width: 1),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          const Text('👑', style: TextStyle(fontSize: 16)),
+                          const SizedBox(width: 8),
+                          Text(goalName, style: const TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF065F46), fontSize: 14)),
+                        ],
+                      ),
+                      Text('RM ${targetPrice.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF047857), fontSize: 14)),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  // ⚡ MUTATION: Flips target milestone status context to achieved
+  Future<void> _handleMarkGoalAsAchieved(String goalId, String goalName) async {
+    try {
+      await supabaseService.client
+          .from('savings_goals')
+          .update({'status': 'achieved'})
+          .eq('id', goalId);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF10B981),
+            content: Text('🎉 Awesome! Saved "$goalName" to the Achieved Vault!'),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error archiving completed milestone: $e');
+    }
   }
 
   void _showTransferMoneyBottomSheet(String childName, String childId) {
@@ -1053,13 +1565,23 @@ Future<void> _approveTaskAndDisburseFunds(String taskId, String childId, double 
             );
           }
 
-          // 🗂️ TAB CONFIGURATION: Content screens only (Headers have been cleanly abstracted out)
+          // 🛡️ Evaluate parental content lock gates dynamically from profile state mapping parameters
+          final bool isContentRestricted = profile.parentalContentRestriction ?? false;
+
+          // 🗂️ TAB CONFIGURATION: Intercepts and blocks specific analytical routes conditionally using an inline check
           final List<Widget> screens = [
             _buildHomeDashboard(snapshot),          // Screen 1: Home Dashboard Panel
-            const GoalsScreen(),          
-            const MoneyReportScreen(),             // Screen 2: Missions
-            const TransactionHistoryScreen(),  
-           // Screen 3: History Reports
+            const GoalsScreen(),                    // Screen 2: Missions & Saving Targets Target Line
+            
+            // 📊 Screen 3: Money Report Screen (Conditionally Restricted)
+            isContentRestricted 
+                ? const RestrictedPagePlaceholder(pageTitle: 'Financial Performance Report')
+                : const MoneyReportScreen(),
+                
+            // 📜 Screen 4: Transaction History Screen (Conditionally Restricted)
+            isContentRestricted 
+                ? const RestrictedPagePlaceholder(pageTitle: 'Transaction History')
+                : const TransactionHistoryScreen(),  
           ];
 
           return Scaffold(
@@ -1094,6 +1616,18 @@ Future<void> _approveTaskAndDisburseFunds(String taskId, String childId, double 
                                               children: [
                                                 Text('Hi, ${profile.username}! 👋', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF1F2937))),
                                                 const SizedBox(height: 4),
+                                                // 🧑‍🧑‍🧒 PARENT LOGICAL INDICATOR:
+                                                Row(
+                                                  children: [
+                                                    Text(
+                                                      'Linked to: ${profile.parentName ?? "Parent Account"} ', 
+                                                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF8B5CF6)),
+                                                    ),
+                                                    const Icon(Icons.supervisor_account_rounded, size: 16, color: Color(0xFF8B5CF6)),
+                                                    const SizedBox(width: 4),
+                                                  ],
+                                                ),
+                                                const SizedBox(height: 6),
                                                 const Text('Ready to master your financial goals today?', style: TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
                                               ],
                                             ),
@@ -1119,6 +1653,19 @@ Future<void> _approveTaskAndDisburseFunds(String taskId, String childId, double 
                                             style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
                                           ),
                                           const SizedBox(height: 4),
+                                          // 🧑‍🧑‍🧒 PARENT LOGICAL INDICATOR:
+                                          Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Text(
+                                                'Linked to: ${profile.parentName ?? "Parent Account"} ', 
+                                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF8B5CF6)),
+                                              ),
+                                              const Icon(Icons.supervisor_account_rounded, size: 18, color: Color(0xFF8B5CF6)),
+                                              const SizedBox(width: 4),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 6),
                                           const Text('Ready to master your financial goals today?', style: TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
                                         ],
                                       ),
@@ -1261,11 +1808,10 @@ Widget _buildConditionalWrapper({required bool isFlexed, required Widget child})
   }
 
   // 📊 Sub-component: Responsive Money Plan Layout (With Legend Below Title) 
-Widget _buildResponsiveCoinPlan({required bool isNarrowScreen, required dynamic wallet}) {
-    // 1. Get the raw unallocated balance (or combined total)
-    final double totalBalance = (wallet.spendBalance ?? 0.0) + 
-                                (wallet.saveBalance ?? 0.0) + 
-                                (wallet.shareBalance ?? 0.0);
+  Widget _buildResponsiveCoinPlan({required bool isNarrowScreen, required dynamic wallet}) {
+    // 🎯 FIXED: Pull totalBalance directly from your model property if available
+    final double totalBalance = wallet.totalBalance ?? 
+        ((wallet.spendBalance ?? 0.0) + (wallet.saveBalance ?? 0.0) + (wallet.shareBalance ?? 0.0));
 
     // 2. Calculate the 70/20/10 split dynamically so it matches the bottom sheet
     final double saveAllocated = totalBalance * 0.70;
@@ -1331,34 +1877,21 @@ Widget _buildResponsiveCoinPlan({required bool isNarrowScreen, required dynamic 
       ),
     );
 
-    // ➕ New Transaction Action Button for the Child
-final Widget addTransactionButton = ElevatedButton.icon(
+    final Widget addTransactionButton = ElevatedButton.icon(
       onPressed: () {
-        // ✅ Replaced with a concrete, inline native stub until you build your custom layout sheet
-        showModalBottomSheet(
-          context: context,
-          isScrollControlled: true,
-          backgroundColor: Colors.transparent,
-          builder: (context) => Container(
-            height: MediaQuery.of(context).size.height * 0.6,
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-            ),
-            child: const Center(child: Text("Coming Soon! 🇲🇾")),
-          ),
-        ).then((_) => _refreshData()); // Triggers your state lifecycle sync upon close
+        // Invoke a customized local simulation workflow overlay sheet natively
+        _showChildPaymentSimulationBottomSheet(context, wallet);
       },
-      icon: const Icon(Icons.add_rounded, size: 16, color: Colors.white),
+      icon: const Icon(Icons.qr_code_scanner_rounded, size: 16, color: Colors.white),
       label: const Text(
-        'Pay Using QR',
+        'Pay',
         style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
       ),
       style: ElevatedButton.styleFrom(
         backgroundColor: const Color(0xFF1F2937),
         elevation: 0,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
 
@@ -1395,242 +1928,507 @@ final Widget addTransactionButton = ElevatedButton.icon(
     }
   }
 
+void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet) {
+  final TextEditingController accountController = TextEditingController();
+  final TextEditingController amountController = TextEditingController();
+  final TextEditingController referenceController = TextEditingController();
+  final formKey = GlobalKey<FormState>();
+  bool isProcessing = false;
+  bool isWalletFrozen = false; // Tracks if the profile is currently frozen
+  bool isLoadingConfig = true;
+
+  // 🧮 SMART RULE ALIGNMENT: Calculate available funds dynamically as 20% of total_balance
+  final double liquidAvailableFunds = ((wallet.totalBalance ?? 0.00) * 0.20).toDouble();
+
+  // 🛠️ SMART QR ROUTER: Handles desktop simulation vs mobile behavior safely without crashing
+  void _handleQRAction(BuildContext context, StateSetter setLocalState) {
+    final bool isComputer = kIsWeb || 
+        defaultTargetPlatform == TargetPlatform.macOS || 
+        defaultTargetPlatform == TargetPlatform.windows || 
+        defaultTargetPlatform == TargetPlatform.linux;
+
+    if (isComputer) {
+      showDialog(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text('🖥️ QR Scanner Simulator'),
+            content: const Text(
+              'Your computer setup does not use a physical mobile scanner plugin.\n\n'
+              'Select a mock 16-digit test QR payload to inject:',
+            ),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            actionsAlignment: MainAxisAlignment.spaceEvenly,
+            actions: [
+              TextButton(
+                onPressed: () {
+                  setLocalState(() => accountController.text = '1642839482910011');
+                  Navigator.pop(dialogContext);
+                },
+                child: const Text('Inject Code A (16-digits)'),
+              ),
+              TextButton(
+                onPressed: () {
+                  setLocalState(() => accountController.text = '9876543210987654');
+                  Navigator.pop(dialogContext);
+                },
+                child: const Text('Inject Code B (16-digits)'),
+              ),
+            ],
+          );
+        },
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Mobile camera stream placeholder. Import mobile_scanner to scan real QR lines.'),
+        ),
+      );
+    }
+  }
+
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) => StatefulBuilder(
+      builder: (BuildContext context, StateSetter setLocalState) {
+        final String? currentProfileId = supabaseService.currentUserId;
+
+        // 📡 LIVE FETCH: Verify current frozen state status straight from profiles metadata
+        if (isLoadingConfig && currentProfileId != null) {
+          supabaseService.client
+              .from('profiles')
+              .select('is_frozen')
+              .eq('id', currentProfileId)
+              .maybeSingle()
+              .then((snapshot) {
+                if (snapshot != null && context.mounted) {
+                  setLocalState(() {
+                    isWalletFrozen = snapshot['is_frozen'] ?? false;
+                    isLoadingConfig = false;
+                  });
+                }
+              });
+
+          return Container(
+            height: 250,
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            ),
+            child: const Center(child: CircularProgressIndicator(color: Color(0xFF8B5CF6))),
+          );
+        }
+
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          ),
+          padding: EdgeInsets.only(
+            top: 12,
+            left: 24,
+            right: 24,
+            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 40, height: 5,
+                  margin: const EdgeInsets.only(bottom: 20),
+                  decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+              
+              // --- DYNAMIC CONDITION ARCHITECTURE ---
+              if (isWalletFrozen) ...[
+                // 🔒 LOCKED STATE VIEW LANE: Shows explicitly when account has been frozen
+                const SizedBox(height: 12),
+                const Center(child: Text('🔒', style: TextStyle(fontSize: 48))),
+                const SizedBox(height: 16),
+                const Center(
+                  child: Text(
+                    'Uh-oh! Pay & Transfer Locked',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Text(
+                    'Oh no! Your account has been frozen by your parent. You are not able to pay for now.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 13, color: Colors.grey[600], height: 1.4),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Color(0xFFE5E7EB)),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Close', style: TextStyle(color: Color(0xFF4B5563), fontWeight: FontWeight.bold)),
+                ),
+              ] else ...[
+                // 🟢 STANDARD ACTIVE TRANSACTION VIEW LANE
+                Row(
+                  children: const [
+                    Text('🪙', style: TextStyle(fontSize: 24)),
+                    SizedBox(width: 8),
+                    Text(
+                      'Simulate Pay & Transfer', 
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                Form(
+                  key: formKey,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextFormField(
+                        controller: accountController,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: 'Recipient Account Number',
+                          hintText: 'e.g., 164283948291 or Phone Number',
+                          prefixIcon: const Icon(Icons.account_balance_wallet_rounded, color: Color(0xFF8B5CF6), size: 20),
+                          suffixIcon: Padding(
+                            padding: const EdgeInsets.all(6.0),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFEDE9FE), 
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: InkWell(
+                                onTap: () => _handleQRAction(context, setLocalState),
+                                borderRadius: BorderRadius.circular(8),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10.0),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: const [
+                                      Text(
+                                        'Scan Payment QR Code',
+                                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF6D28D9)),
+                                      ),
+                                      SizedBox(width: 6),
+                                      Icon(Icons.qr_code_scanner_rounded, color: Color(0xFF6D28D9), size: 18),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          filled: true,
+                          fillColor: const Color(0xFFF9FAFB),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                        ),
+                        validator: (val) => val == null || val.trim().isEmpty ? 'Please enter or scan a valid target recipient ID' : null,
+                      ),
+                      const SizedBox(height: 12),
+
+                      TextFormField(
+                        controller: amountController,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: InputDecoration(
+                          labelText: 'Amount to Disburse (RM)',
+                          hintText: '0.00',
+                          prefixIcon: const Icon(Icons.payments_rounded, color: Color(0xFF10B981), size: 20),
+                          filled: true,
+                          fillColor: const Color(0xFFF9FAFB),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                        ),
+                        validator: (val) {
+                          if (val == null || double.tryParse(val) == null) return 'Please input a valid number metric';
+                          final double parsedAmount = double.parse(val);
+                          if (parsedAmount <= 0) return 'Transaction must be greater than RM 0.00';
+                          if (parsedAmount > liquidAvailableFunds) return 'Insufficient balance in your 20% Fun Bucket!';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+
+                      TextFormField(
+                        controller: referenceController,
+                        decoration: InputDecoration(
+                          labelText: 'Payment Reference (What is this for?)',
+                          hintText: 'e.g., Lunch at Sunway canteen, Stationary, Toys',
+                          prefixIcon: const Icon(Icons.description_rounded, color: Colors.grey, size: 20),
+                          filled: true,
+                          fillColor: const Color(0xFFF9FAFB),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                        ),
+                        validator: (val) => val == null || val.trim().isEmpty ? 'Please add a small payment reason description' : null,
+                      ),
+                      const SizedBox(height: 24),
+
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF1F2937),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          elevation: 0,
+                        ),
+                        onPressed: isProcessing ? null : () async {
+                          if (!formKey.currentState!.validate()) return;
+                          
+                          setLocalState(() => isProcessing = true);
+                          final String targetReceiverId = accountController.text.trim();
+                          final double debitValue = double.parse(amountController.text.trim());
+                          final String logTitle = referenceController.text.trim();
+
+                          if (currentProfileId == null) {
+                            setLocalState(() => isProcessing = false);
+                            return;
+                          }
+
+                          try {
+                            final walletSnapshot = await supabaseService.client
+                                .from('wallets')
+                                .select('total_balance, spend_balance')
+                                .eq('profile_id', currentProfileId)
+                                .maybeSingle();
+
+                            if (walletSnapshot != null) {
+                              final double backendTotal = double.parse((walletSnapshot['total_balance'] ?? 0.0).toString());
+
+                              await Future.wait([
+                                supabaseService.client.from('wallets').update({
+                                  'total_balance': backendTotal - debitValue,
+                                }).eq('profile_id', currentProfileId),
+
+                                supabaseService.client.from('transactions').insert({
+                                  'profile_id': currentProfileId,
+                                  'title': '$logTitle (to $targetReceiverId)',
+                                  'amount': -debitValue, 
+                                  'category': 'Merchant Spend',
+                                  'created_at': DateTime.now().toIso8601String(),
+                                }),
+                              ]);
+
+                              if (context.mounted) {
+                                Navigator.pop(context); 
+                                _refreshData(); 
+                                
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    backgroundColor: const Color(0xFF16A34A),
+                                    content: Text('🎉 Sent RM ${debitValue.toStringAsFixed(2)} to $targetReceiverId successfully!'),
+                                  ),
+                                );
+                              }
+                            }
+                          } catch (e) {
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(backgroundColor: Colors.redAccent, content: Text('Transaction aborted: $e')),
+                              );
+                            }
+                          } finally {
+                            setLocalState(() => isProcessing = false);
+                          }
+                        },
+                        child: isProcessing
+                            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                            : const Text('Authorize Instant Outbound Payment', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    ),
+  );
+}
+
+
 // 🛠️ FIX: Added 'VoidCallback onFinish' signature to match the dashboard call route parameters
 void showSmartMoneyPlanBottomSheet(BuildContext context, WalletModel wallet, VoidCallback onFinish) {
   // 🧮 Calculate portions dynamically from total_balance metric
   final double totalCoins = wallet.totalBalance ?? 
       ((wallet.saveBalance ?? 0.0) + (wallet.spendBalance ?? 0.0) + (wallet.shareBalance ?? 0.0));
 
-  VideoPlayerController? modalVideoController;
-  bool isModalVideoInitialized = false;
-
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
-    isDismissible: false, // Prevents them closing it early by tapping outside
+    isDismissible: false, // Prevents closing early by tapping outside
     enableDrag: false,
     backgroundColor: Colors.transparent, 
     builder: (context) {
-      // 🛠️ WRAPPER: Wrapped the core container inside a StatefulBuilder to refresh the video viewport natively
-      return StatefulBuilder(
-        builder: (BuildContext context, StateSetter setModalState) {
-          // Lazy-init the video controller instance on first build pipeline
-          if (modalVideoController == null) {
-            modalVideoController = VideoPlayerController.networkUrl(
-                Uri.parse('https://tbrefzeytkflqyadayvs.supabase.co/storage/v1/object/public/quest-videos/finance_video.mp4'),
-            )
-              ..setVolume(0.0)
-              ..initialize().then((_) {
-                setModalState(() => isModalVideoInitialized = true);
-              });
-
-            modalVideoController!.addListener(() {
-              setModalState(() {});
-            });
-          }
-
-          return Container(
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-            ),
-            padding: const EdgeInsets.only(top: 16, left: 24, right: 24, bottom: 24),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(context).size.height * 0.85,
+      return Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+        ),
+        padding: const EdgeInsets.only(top: 16, left: 24, right: 24, bottom: 24),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.85,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min, 
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Top Header Drag Notch
+              Center(
+                child: Container(
+                  width: 40, height: 5,
+                  decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)),
+                ),
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min, 
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+              const SizedBox(height: 16),
+
+              // Sticky Non-Scrolling Header Block Component
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // Top Header Drag Notch
-                  Center(
-                    child: Container(
-                      width: 40, height: 5,
-                      decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Sticky Non-Scrolling Header Block Component
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Expanded(
-                        child: Row(
-                          children: [
-                            Text('✨', style: TextStyle(fontSize: 20)),
-                            SizedBox(width: 8),
-                            Text(
-                              'Learn the Smart Money Plan! 🎯',
-                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
-                            ),
-                          ],
+                  const Expanded(
+                    child: Row(
+                      children: [
+                        Text('✨', style: TextStyle(fontSize: 20)),
+                        SizedBox(width: 8),
+                        Text(
+                          'Learn the Smart Money Plan! 🎯',
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
                         ),
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.close_rounded, color: Colors.grey[400]),
-                        onPressed: () {
-                          modalVideoController?.dispose();
-                          Navigator.pop(context);
-                        },
-                      )
-                    ],
-                  ),
-                  const Text(
-                    'Watch this quick video to become a money master! 🚀',
-                    style: TextStyle(fontSize: 13, color: Color(0xFF6B7280), fontWeight: FontWeight.w500),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // 📜 SCROLLABLE BODY VIEWPORT
-                  Expanded(
-                    child: SingleChildScrollView(
-                      physics: const BouncingScrollPhysics(), 
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          // 🎞️ LIVE VIDEO PLAYER CONTAINER (Replaced static gradient placeholder)
-                          Container(
-                            height: 200,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF312E81),
-                              borderRadius: BorderRadius.circular(24),
-                            ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(24),
-                              child: isModalVideoInitialized
-                                  ? AspectRatio(
-                                      aspectRatio: modalVideoController!.value.aspectRatio,
-                                      child: Stack(
-                                        alignment: Alignment.center,
-                                        children: [
-                                          VideoPlayer(modalVideoController!),
-                                          GestureDetector(
-                                            onTap: () {
-                                              setModalState(() {
-                                                modalVideoController!.value.isPlaying 
-                                                    ? modalVideoController!.pause() 
-                                                    : modalVideoController!.play();
-                                              });
-                                            },
-                                            child: CircleAvatar(
-                                              radius: 28,
-                                              backgroundColor: Colors.white.withValues(alpha: 0.9),
-                                              child: Icon(
-                                                modalVideoController!.value.isPlaying 
-                                                    ? Icons.pause_rounded 
-                                                    : Icons.play_arrow_rounded,
-                                                color: const Color(0xFF6366F1), 
-                                                size: 32,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    )
-                                  : const Center(
-                                      child: CircularProgressIndicator(color: Colors.white),
-                                    ),
-                            ),
-                          ),
-                          const SizedBox(height: 24),
-
-                          const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text('🎓', style: TextStyle(fontSize: 16)),
-                              SizedBox(width: 6),
-                              Text(
-                                'The Smart Money Rule',
-                                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-
-                          // 🟢 SAVE TARGET SEGMENT ROW (Formulaic Split calculation)
-                          _buildAllocationCard(
-                            liveValue: (totalCoins * 0.70).toStringAsFixed(2),
-                            title: '💚 Save 70% - Be Smart!',
-                            subtitle: 'Put 70% of your money into savings for your big dreams like that gaming console or bicycle! This helps you reach your goals faster! 🎯',
-                            icon: '🐷',
-                            themeColor: const Color(0xFFDCFCE7),
-                            textColor: const Color(0xFF15803D),
-                            borderColor: const Color(0xFFBBF7D0),
-                          ),
-                          const SizedBox(height: 12),
-
-                          // 🔵 SPEND TARGET SEGMENT ROW (Formulaic Split calculation)
-                          _buildAllocationCard(
-                            liveValue: (totalCoins * 0.20).toStringAsFixed(2),
-                            title: '💙 Spend 20% - Have Fun!',
-                            subtitle: 'Use 20% for fun stuff you want right now! Snacks, games, or treats - enjoy the rewards of your hard work! 🎉',
-                            icon: '🛍️',
-                            themeColor: const Color(0xFFDBEAFE),
-                            textColor: const Color(0xFF1D4ED8),
-                            borderColor: const Color(0xFFBFDBFE),
-                          ),
-                          const SizedBox(height: 12),
-
-                          // 💗 SHARE TARGET SEGMENT ROW (Formulaic Split calculation)
-                          _buildAllocationCard(
-                            liveValue: (totalCoins * 0.10).toStringAsFixed(2),
-                            title: '💖 Share 10% - Be Kind!',
-                            subtitle: 'Give 10% to help others! Buy gifts for family, donate to charity, or help a friend. Sharing makes the world better! ✨',
-                            icon: '💝',
-                            themeColor: const Color(0xFFFCE7F3),
-                            textColor: const Color(0xFFB70E5C),
-                            borderColor: const Color(0xFFFBCFE8),
-                          ),
-                          const SizedBox(height: 16),
-                        ],
-                      ),
+                      ],
                     ),
                   ),
-
-                  // Sticky Bottom Confirmation CTA Execution Button Frame
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF4F46E5),
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      elevation: 0,
-                    ),
-                    onPressed: () async {
-                      modalVideoController?.pause();
-                      modalVideoController?.dispose(); // Clean up memory threads
-
-                      final String? profileId = supabaseService.currentUserId;
-                      if (profileId != null) {
-                        try {
-                          // Save compliance metric permanently to Supabase
-                          await supabaseService.client
-                              .from('profiles')
-                              .update({'has_completed_onboarding': true})
-                              .eq('id', profileId);
-                        } catch (e) {
-                          debugPrint('Onboarding sync error: $e');
-                        }
-                      }
-
-                      // Close bottom sheet and signal main view state profile reload refresh
-                      if (context.mounted) {
-                        Navigator.pop(context); 
-                        onFinish();             
-                      }
-                    },
-                    child: const Text(
-                      "Got it! Let's Start! 🚀", 
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
-                    ),
-                  ),
+                  IconButton(
+                    icon: Icon(Icons.close_rounded, color: Colors.grey[400]),
+                    onPressed: () => Navigator.pop(context), // Pops cleanly; triggers video dispose() automatically
+                  )
                 ],
               ),
-            ),
-          );
-        },
+              const Text(
+                'Watch this quick video to become a money master! 🚀',
+                style: TextStyle(fontSize: 13, color: Color(0xFF6B7280), fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 16),
+
+              // 📜 SCROLLABLE BODY VIEWPORT
+              Expanded(
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(), 
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // 🎞️ LIVE VIDEO PLAYER CONTAINER (Decoupled lifecycle wrapper)
+                      Container(
+                        height: 200,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF312E81),
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(24),
+                          child: const LocalVideoPlayer(
+                            videoUrl: 'https://tbrefzeytkflqyadayvs.supabase.co/storage/v1/object/public/quest-videos/finance_video.mp4',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+
+                      const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text('🎓', style: TextStyle(fontSize: 16)),
+                          SizedBox(width: 6),
+                          Text(
+                            'The Smart Money Rule',
+                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+
+                      // 🟢 SAVE TARGET SEGMENT ROW
+                      _buildAllocationCard(
+                        liveValue: (totalCoins * 0.70).toStringAsFixed(2),
+                        title: '💚 Save 70% - Be Smart!',
+                        subtitle: 'Put 70% of your money into savings for your big dreams like that gaming console or bicycle! This helps you reach your goals faster! 🎯',
+                        icon: '🐷',
+                        themeColor: const Color(0xFFDCFCE7),
+                        textColor: const Color(0xFF15803D),
+                        borderColor: const Color(0xFFBBF7D0),
+                      ),
+                      const SizedBox(height: 12),
+
+                      // 🔵 SPEND TARGET SEGMENT ROW
+                      _buildAllocationCard(
+                        liveValue: (totalCoins * 0.20).toStringAsFixed(2),
+                        title: '💙 Spend 20% - Have Fun!',
+                        subtitle: 'Use 20% for fun stuff you want right now! Snacks, games, or treats - enjoy the rewards of your hard work! 🎉',
+                        icon: '🛍️',
+                        themeColor: const Color(0xFFDBEAFE),
+                        textColor: const Color(0xFF1D4ED8),
+                        borderColor: const Color(0xFFBFDBFE),
+                      ),
+                      const SizedBox(height: 12),
+
+                      // 💗 SHARE TARGET SEGMENT ROW
+                      _buildAllocationCard(
+                        liveValue: (totalCoins * 0.10).toStringAsFixed(2),
+                        title: '💖 Share 10% - Be Kind!',
+                        subtitle: 'Give 10% to help others! Buy gifts for family, donate to charity, or help a friend. Sharing makes the world better! ✨',
+                        icon: '💝',
+                        themeColor: const Color(0xFFFCE7F3),
+                        textColor: const Color(0xFFB70E5C),
+                        borderColor: const Color(0xFFFBCFE8),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Sticky Bottom Confirmation CTA Execution Button Frame
+              const SizedBox(height: 16),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF4F46E5),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  elevation: 0,
+                ),
+                onPressed: () async {
+                  final String? profileId = supabaseService.currentUserId;
+                  if (profileId != null) {
+                    try {
+                      await supabaseService.client
+                          .from('profiles')
+                          .update({'has_completed_onboarding': true})
+                          .eq('id', profileId);
+                    } catch (e) {
+                      debugPrint('Onboarding sync error: $e');
+                    }
+                  }
+
+                  if (context.mounted) {
+                    Navigator.pop(context); // Triggers LocalVideoPlayer's dispose() automatically!
+                    onFinish();             
+                  }
+                },
+                child: const Text(
+                  "Got it! Let's Start! 🚀", 
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                ),
+              ),
+            ],
+          ),
+        ),
       );
     },
   );
@@ -2519,17 +3317,15 @@ Widget _buildLinkedChildrenSection() {
                           borderRadius: BorderRadius.circular(20),
                           child: InkWell(
                             // ✅ UPDATED REACTIVE LAYOUT CALL ROUTE:
-                            onTap: () async { // 👈 Ensure 'async' is here
+                            onTap: () async { 
                               if (isApproved) {
-                                // 🌟 THE JEDI MOVEMENT: Await the bottom sheet lifespan closure directly
                                 await _showParentTaskManagerBottomSheet(kidName, kidId);
-                                
-                                // 🚀 Triggers immediately to pull fresh values from the DB right when the sheet is closed!
-                                _refreshData();
+                                _refreshData(); // Automatically updates the screen when closed
                               } else {
                                 _handleInstantApproval(kidId, kidName);
                               }
                             },
+                            // 2. Keep the trailing property simple
                             child: Center(
                               child: ListTile(
                                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
@@ -2682,4 +3478,99 @@ Future<bool> _handleRemoveChildFromHousehold(String childId, String childName) a
     ],
   );
 }
+}
+
+class LocalVideoPlayer extends StatefulWidget {
+  final String videoUrl;
+  const LocalVideoPlayer({Key? key, required this.videoUrl}) : super(key: key);
+
+  @override
+  State<LocalVideoPlayer> createState() => _LocalVideoPlayerState();
+}
+
+class _LocalVideoPlayerState extends State<LocalVideoPlayer> {
+  late VideoPlayerController _controller;
+  bool _isInitialized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.networkUrl(Uri.parse(widget.videoUrl))
+      ..initialize().then((_) {
+        if (mounted) setState(() => _isInitialized = true);
+      });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose(); // Safely detached by the framework engine natively
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_isInitialized) {
+      return const Center(child: CircularProgressIndicator(color: Colors.white));
+    }
+    return AspectRatio(
+      aspectRatio: _controller.value.aspectRatio,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          VideoPlayer(_controller),
+          GestureDetector(
+            onTap: () {
+              setState(() {
+                _controller.value.isPlaying ? _controller.pause() : _controller.play();
+              });
+            },
+            child: CircleAvatar(
+              radius: 28,
+              backgroundColor: Colors.white.withOpacity(0.9),
+              child: Icon(
+                _controller.value.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                color: const Color(0xFF6366F1),
+                size: 32,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class RestrictedPagePlaceholder extends StatelessWidget {
+  final String pageTitle;
+  const RestrictedPagePlaceholder({Key? key, required this.pageTitle}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F6FA),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text('🛡️', style: TextStyle(fontSize: 54)),
+              const SizedBox(height: 16),
+              Text(
+                'Oops! $pageTitle Locked',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Your parents have turned on page restrictions. Access to certain pages is paused for now.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: Colors.grey[600], height: 1.4),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

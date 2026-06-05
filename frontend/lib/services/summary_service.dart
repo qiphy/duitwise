@@ -10,35 +10,55 @@ import '../models.dart';
 
 class SummaryService {
   // 🧠 Connects to the Python backend method to fetch custom OpenRouter insights
-  Future<String> _fetchAIInsight(WalletModel wallet, Map<String, dynamic>? goalData, double earned, double spent) async {
-    try {
-      final String goalName = goalData != null ? goalData['goal_name'] ?? 'None' : 'None';
-      
-      // Calculate dynamic formula subsets to give accurate context vectors to the AI analyzer model
-      final double totalPool = wallet.totalBalance ?? 
-          ((wallet.saveBalance ?? 0.0) + (wallet.spendBalance ?? 0.0) + (wallet.shareBalance ?? 0.0));
+Future<String> _fetchAIInsight(WalletModel wallet, Map<String, dynamic>? goalData, double earned, double spent) async {
+  try {
+    final String goalName = goalData != null ? goalData['goal_name'] ?? 'None' : 'None';
+    
+    final double totalPool = wallet.totalBalance ?? 
+        ((wallet.saveBalance ?? 0.0) + (wallet.spendBalance ?? 0.0) + (wallet.shareBalance ?? 0.0));
 
-      final response = await http.post(
-        Uri.parse('https://tbrefzeytkflqyadayvs.supabase.co/functions/v1/analyze-ledger'),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-          "saveBalance": totalPool * 0.70,
-          "spendBalance": totalPool * 0.20,
-          "totalEarned": earned,
-          "totalSpent": spent,
-          "activeDream": goalName
-        }),
-      ).timeout(const Duration(seconds: 10)); // ⏱️ Hard cutoff safety tracking
+    // 🔑 THE CORRECT WAY: Extract the live User JWT Access Token from the active session
+    final String? jwtToken = supabaseService.client.auth.currentSession?.accessToken;
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        return data['insight'] ?? 'You are doing great! Keep tracking your pockets and balancing your savings targets.';
-      }
-    } catch (_) {
-      // Catch network drops or render cold starts silently
+    if (jwtToken == null) {
+      debugPrint('⚠️ summary_service: No active authenticated session found. Aborting AI fetch.');
+      return 'Fantastic work tracking your ledger this month! Your savings rate is steady.';
     }
-    return 'Fantastic work tracking your ledger this month! Your savings rate is steady. Keep checking your missions list to build continuous habits towards your big goals!';
+
+    final Map<String, String> requestHeaders = {
+      "Content-Type": "application/json",
+      // Pass the user's specific bearer token. The Edge function decodes this to know exactly which child is requesting the data!
+      "Authorization": "Bearer $jwtToken",
+    };
+
+    debugPrint('📡 summary_service: Dispatching payload vectors to Edge function...');
+
+    final response = await http.post(
+      Uri.parse('https://tbrefzeytkflqyadayvs.supabase.co/functions/v1/analyze-ledger'),
+      headers: requestHeaders,
+      body: jsonEncode({
+        "saveBalance": totalPool * 0.70,
+        "spendBalance": totalPool * 0.20,
+        "totalEarned": earned,
+        "totalSpent": spent,
+        "activeDream": goalName
+      }),
+    ).timeout(const Duration(seconds: 10));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      if (data != null && data['insight'] != null) {
+        return data['insight'] as String;
+      }
+    } else {
+      debugPrint('⚠️ summary_service: Edge function rejected invocation. Status: ${response.statusCode}, Body: ${response.body}');
+    }
+  } catch (e) {
+    debugPrint('⚠️ summary_service: Network stream breakdown: $e');
   }
+  
+  return 'Fantastic work tracking your ledger this month! Your savings rate is steady. Keep checking your missions list to build continuous habits towards your big goals!';
+}
 
   // 🛠️ COHERENT INTERFACE: Takes childName dynamically to format statements beautifully for both scopes
   Future<void> generateAndDownloadReport(BuildContext context, WalletModel wallet, String childName) async {
@@ -49,7 +69,6 @@ class SummaryService {
     final DateTime now = DateTime.now();
     final String currentMonthStr = DateFormat('MMMM yyyy').format(now);
 
-    // Default structural variables fallback setups
     Map<String, dynamic>? goalData;
     List<dynamic> txData = [];
     String aiInsight = 'Fantastic work tracking your ledger this month! Your savings rate is steady. Keep checking your missions list to build continuous habits towards your big goals!';
@@ -83,10 +102,9 @@ class SummaryService {
         aiInsight = await _fetchAIInsight(wallet, goalData, totalEarned, totalSpent)
             .timeout(const Duration(seconds: 10));
       } catch (e) {
-        debugPrint('⚠️ AI endpoint unreached. Applying local engine copy fallback context rules.');
+        debugPrint('⚠️ AI endpoint unreached. Applying local engine copy fallback context rules: $e');
       }
 
-      // 🧮 FORMULA SYNCHRONIZATION POOL
       final double totalCoins = wallet.totalBalance ?? 
           ((wallet.saveBalance ?? 0.0) + (wallet.spendBalance ?? 0.0) + (wallet.shareBalance ?? 0.0));
 
@@ -107,7 +125,6 @@ class SummaryService {
                       children: [
                         pw.Text('DUITWISE FINANCIAL LOG', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#8B5CF6'), letterSpacing: 1.2)),
                         pw.SizedBox(height: 4),
-                        // ✅ DYNAMIC STATEMENT BANNER TITLE
                         pw.Text('$childName\'s Monthly Statement', style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#0F172A'))),
                         pw.SizedBox(height: 2),
                         pw.Text('Period: $currentMonthStr', style: pw.TextStyle(fontSize: 11, color: PdfColor.fromHex('#64748B'))),
@@ -148,7 +165,6 @@ class SummaryService {
                 ),
                 pw.SizedBox(height: 24),
 
-                // BALANCE SHEET CONTAINERS (Forced explicit formula split outputs)
                 pw.Text('Pocket Allocations Balance Sheet', style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#0F172A'))),
                 pw.SizedBox(height: 10),
                 pw.Row(

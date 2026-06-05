@@ -13,6 +13,25 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _isLoginMode = true;
   int _signupStep = 1; // 1: Credentials, 2: Role Selection, 3: Goals Setup
   String _selectedRole = 'child';
+
+  String _getHumanReadableError(dynamic e) {
+    // Checks type or string representation dynamically to avoid explicit import compilation blocks
+    final msg = e.toString().toLowerCase();
+    
+    if (msg.contains('invalid login credentials')) {
+      return 'Double-check your email or password and try again!';
+    } else if (msg.contains('already registered') || msg.contains('email already in use')) {
+      return 'This email is already in use. Try logging in instead!';
+    } else if (msg.contains('weak password') || msg.contains('should be at least')) {
+      return 'Your password is too weak. Make it longer!';
+    } else if (msg.contains('network') || msg.contains('socketexception')) {
+      return 'Connection lost. Please check your internet connection!';
+    }
+    
+    // Extracts the text if it's a Supabase AuthException object without requiring the package import
+    return e.runtimeType.toString() == 'AuthException' ? (e as dynamic).message : 'Something went wrong. Please try again!';
+  }
+  
   
   final _formKey = GlobalKey<FormState>();
   final _goalFormKey = GlobalKey<FormState>();
@@ -24,6 +43,8 @@ class _AuthScreenState extends State<AuthScreen> {
   final TextEditingController _goalNameController = TextEditingController();
   final TextEditingController _goalAmountController = TextEditingController();
   final TextEditingController _parentEmailController = TextEditingController();
+
+  
   
   bool _isLoading = false;
 
@@ -39,6 +60,8 @@ class _AuthScreenState extends State<AuthScreen> {
     });
   }
 
+  
+
   // --- Step 1: Login Check or Local Validation ---
   Future<void> _handleStepOneSubmit() async {
     if (!_formKey.currentState!.validate()) return;
@@ -51,28 +74,30 @@ class _AuthScreenState extends State<AuthScreen> {
           password: _passwordController.text.trim(),
         );
         
+        if (!mounted) return;
+
         if (response.user != null) {
-          // Verify if child approval gate condition is fully satisfied
           final profileCheck = await supabaseService.client
               .from('profiles')
               .select('role, is_approved')
               .eq('id', response.user!.id)
               .maybeSingle();
 
+          if (!mounted) return;
+
           if (profileCheck != null && profileCheck['role'] == 'child' && !(profileCheck['is_approved'] ?? false)) {
             await supabaseService.client.auth.signOut();
             if (mounted) _showWaitingForApprovalDialog();
-            return;
+            return; // Stops execution immediately
           }
           _navigateToDashboard();
         }
       } catch (e) {
-        _showSnackBar('Login Failed: ${e.toString()}');
+        _showSnackBar('Login Failed: ${_getHumanReadableError(e)}');
       } finally {
-        setState(() => _isLoading = false);
+        if (mounted) setState(() => _isLoading = false);
       }
     } else {
-      // Purely local step transition. No network request made yet!
       setState(() => _signupStep = 2);
     }
   }
@@ -90,6 +115,11 @@ class _AuthScreenState extends State<AuthScreen> {
 
   // --- Step 3 / Final Processing Layer ---
   Future<void> _executeFinalRegistration() async {
+    // Validate child inputs first so the UI button doesn't freeze on an error
+    if (_selectedRole == 'child' && !_goalFormKey.currentState!.validate()) {
+      return; 
+    }
+
     setState(() => _isLoading = true);
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
@@ -98,10 +128,7 @@ class _AuthScreenState extends State<AuthScreen> {
     try {
       String? parentUuid;
 
-      // If account is a child, pre-verify parent presence before triggering auth signup
       if (_selectedRole == 'child') {
-        if (!_goalFormKey.currentState!.validate()) return;
-        
         final parentEmail = _parentEmailController.text.trim();
         final parentLookup = await supabaseService.client
             .from('profiles')
@@ -110,19 +137,23 @@ class _AuthScreenState extends State<AuthScreen> {
             .eq('role', 'parent')
             .maybeSingle();
 
+        if (!mounted) return;
+
         if (parentLookup == null) {
-          if (mounted) _showMissingParentDialog(parentEmail);
+          _showMissingParentDialog(parentEmail);
+          setState(() => _isLoading = false); 
           return;
         }
         parentUuid = parentLookup['id'] as String;
       }
 
-      // --- ALL CHECKS PASSED: Commit to Supabase Identity Vault ---
       final response = await supabaseService.client.auth.signUp(
         email: email,
         password: password,
         data: {'username': username},
       );
+
+      if (!mounted) return;
 
       if (response.user != null) {
         final profileId = response.user!.id;
@@ -137,9 +168,8 @@ class _AuthScreenState extends State<AuthScreen> {
             'xp': 0,
             'streak': 1,
           });
-          _navigateToDashboard();
+          if (mounted) _navigateToDashboard();
         } else {
-          // 1. Commit child baseline profile data row
           await supabaseService.client.from('profiles').insert({
             'id': profileId,
             'username': username,
@@ -151,11 +181,10 @@ class _AuthScreenState extends State<AuthScreen> {
             'streak': 1,
           });
 
-          // 2. Commit target core savings goals configuration metrics
           await supabaseService.client.from('savings_goals').insert({
             'profile_id': profileId,
             'goal_name': _goalNameController.text.trim(),
-            'target_amount': double.parse(_goalAmountController.text.trim()),
+            'target_amount': double.tryParse(_goalAmountController.text.trim()) ?? 0.00,
             'current_amount': 0.00,
           });
 
@@ -163,15 +192,16 @@ class _AuthScreenState extends State<AuthScreen> {
         }
       }
     } catch (e) {
-      _showSnackBar('Account registration failed: ${e.toString()}');
+      _showSnackBar('Account registration failed: ${_getHumanReadableError(e)}');
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   void _navigateToDashboard() {
-    Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const HomeScreen()));
-  }
+    if (!mounted) return;
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const HomeScreen()));
+    }
 
   void _showSnackBar(String text) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
@@ -457,7 +487,26 @@ class _AuthScreenState extends State<AuthScreen> {
         title: const Text('Awaiting Parent Approval! ✉️', textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold)),
         content: const Text('We\'ve sent a confirmation request to your parent. Once they approve it from their side, you will get instant access to your coin dashboard!', textAlign: TextAlign.center),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Center(child: Text('OK', style: TextStyle(color: Color(0xFF8B5CF6), fontWeight: FontWeight.bold)))),
+          TextButton(
+            onPressed: () {
+              // 1. Close the dialog window safely
+              Navigator.pop(context); 
+              
+              // 2. Flip the UI state back to Login Mode and reset to step 1
+              setState(() {
+                _isLoginMode = true;
+                _signupStep = 1;
+                _formKey.currentState?.reset();
+                _goalFormKey.currentState?.reset();
+                _emailController.clear();
+                _passwordController.clear();
+                _usernameController.clear();
+              });
+            }, 
+            child: const Center(
+              child: Text('OK', style: TextStyle(color: Color(0xFF8B5CF6), fontWeight: FontWeight.bold))
+            )
+          ),
         ],
       ),
     );
