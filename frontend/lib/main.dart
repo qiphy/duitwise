@@ -51,7 +51,6 @@ class FinancialLiteracyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Check dynamically if a user profile is already stored on disk
-    final currentSession = supabaseService.client.auth.currentSession;
 
     return MaterialApp(
       title: 'Duitwise | Financial Literacy for Kids',

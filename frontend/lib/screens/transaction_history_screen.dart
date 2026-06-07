@@ -1,9 +1,5 @@
 import 'package:flutter/material.dart';
 import '../supabase_service.dart';
-import '../services/summary_service.dart';
-import 'dart:convert'; // Fixes jsonDecode
-import 'package:http/http.dart' as http; // Fixes http
-import '../models.dart'; // Fixes WalletModel (verify path matches your folder structure)
 
 class TransactionHistoryScreen extends StatefulWidget {
   const TransactionHistoryScreen({Key? key}) : super(key: key);

@@ -1,10 +1,7 @@
 import 'package:flutter/material.dart';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
 import '../main.dart'; 
 import '../supabase_service.dart';
 import '../models.dart';
-import '../widgets/balance_card.dart';
 import 'quest_screen.dart';
 import 'goals_screen.dart';
 import 'auth_screen.dart'; 
@@ -15,8 +12,10 @@ import 'transaction_history_screen.dart';
 import 'money_report_screen.dart';
 import 'package:video_player/video_player.dart';
 import '../services/summary_service.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'; // 💡 Required for kIsWeb and defaultTargetPlatform
+import 'package:mobile_scanner/mobile_scanner.dart';
+import '../widgets/parent_task_manager_sheet.dart';
+import '../services/transaction_categorizer.dart'; 
 
 // --- Local Dashboard Data Composition Wrapper ---
 class DashboardData {
@@ -253,867 +252,39 @@ Future<DashboardData> _fetchDashboardTelemetry() async {
     );
   }
 
-// --- Enhanced Parent Control Sheet: Dual Task & Goal Management Hub ---
-int _selectedTabIdx = 0; 
-
 Future<void> _showParentTaskManagerBottomSheet(String childName, String childId) async {
-    // 🛡️ State variables for configuration and visibility controls
-    bool isLoadingConfig = true;
-    bool isAccountFrozen = false;
-    bool restrictVisibility = false;
-    bool showSettings = false; // ⚙️ Tracks whether settings are taking over the view channel
+  // 🧠 Await the explicit action code returned upon closing the context frame channel
+  final String? forwardAction = await showModalBottomSheet<String>(
+    context: context,
+    isScrollControlled: true,
+    isDismissible: true, 
+    enableDrag: true,    
+    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+    builder: (context) => ParentTaskManagerSheet(childName: childName, childId: childId),
+  );
 
-    // 🎬 REWARD MANAGEMENT STATE HOOKS:
-    int currentVideoXp = 100;
-    double currentVideoCoins = 10.00;
+  if (forwardAction == null) {
+    debugPrint('🤫 Swiped down/dismissed without explicit action: Absolute silent refresh checks.');
+    _refreshData(); // Always align local dashboard matrices just in case toggles were flipped
+    return;
+  }
 
-    // ✏️ Text Editing Controllers to handle text input fields seamlessly
-    final TextEditingController xpController = TextEditingController();
-    final TextEditingController coinsController = TextEditingController();
-    final GlobalKey<FormState> settingsFormKey = GlobalKey<FormState>();
-
-    // 🧠 Await the closing response of the modal layout sheet frame channel
-    final bool? shouldRefresh = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      isDismissible: true, 
-      enableDrag: true,    
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (context) {
-        return StatefulBuilder( 
-          builder: (BuildContext context, StateSetter setModalState) {
-            
-            // 📡 ASYNC INITIALIZATION: Pull current child guardrail settings dynamically from backend
-            if (isLoadingConfig) {
-              supabaseService.client
-                  .from('profiles')
-                  .select('is_frozen, parental_content_restriction, video_xp_reward, video_coin_reward')
-                  .eq('id', childId)
-                  .maybeSingle()
-                  .then((snapshot) {
-                    if (snapshot != null && context.mounted) {
-                      setModalState(() {
-                        isAccountFrozen = snapshot['is_frozen'] ?? false;
-                        restrictVisibility = snapshot['parental_content_restriction'] ?? false;
-                        currentVideoXp = (snapshot['video_xp_reward'] as num?)?.toInt() ?? 100;
-                        currentVideoCoins = (snapshot['video_coin_reward'] as num?)?.toDouble() ?? 10.00;
-                        
-                        // Sync database truth into controllers exactly once on load
-                        xpController.text = currentVideoXp.toString();
-                        coinsController.text = currentVideoCoins.toStringAsFixed(2);
-                        
-                        isLoadingConfig = false;
-                      });
-                    }
-                  });
-            }
-
-            return Container(
-              height: MediaQuery.of(context).size.height * 0.85,
-              padding: const EdgeInsets.only(top: 12, left: 24, right: 24, bottom: 24), 
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 5,
-                      margin: const EdgeInsets.only(bottom: 20), 
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFCBD5E1), 
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                  ),
-
-                  // --- 1. HEADER CONTROL PAD BLOCK ---
-                  FutureBuilder<List<dynamic>>(
-                    future: supabaseService.client
-                        .from('wallets')
-                        .select('total_balance, save_balance, spend_balance, share_balance')
-                        .eq('profile_id', childId),
-                    builder: (context, walletSnapshot) {
-                      final walletData = walletSnapshot.data ?? [];
-                      double currentTotal = 0.00;
-                      if (walletData.isNotEmpty) {
-                        if (walletData.first['total_balance'] != null) {
-                          currentTotal = double.parse(walletData.first['total_balance'].toString());
-                        } else {
-                          final double s = double.parse((walletData.first['save_balance'] ?? 0.0).toString());
-                          final double sp = double.parse((walletData.first['spend_balance'] ?? 0.0).toString());
-                          final double sh = double.parse((walletData.first['share_balance'] ?? 0.0).toString());
-                          currentTotal = s + sp + sh;
-                        }
-                      }
-
-                      return LayoutBuilder(
-                        builder: (context, constraints) {
-                          final bool isNarrow = constraints.maxWidth < 600;
-
-                          return Wrap(
-                            spacing: 16,
-                            runSpacing: 16,
-                            alignment: WrapAlignment.spaceBetween,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              ConstrainedBox(
-                                constraints: BoxConstraints(
-                                  maxWidth: isNarrow ? constraints.maxWidth : constraints.maxWidth * 0.45,
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Flexible(
-                                          child: Text(
-                                            showSettings ? 'Settings: $childName ⚙️' : '$childName\'s Hub 🚀', 
-                                            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 4),
-                                        IconButton(
-                                          icon: Icon(
-                                            showSettings ? Icons.close_rounded : Icons.settings_outlined,
-                                            color: const Color(0xFF8B5CF6),
-                                            size: 22,
-                                          ),
-                                          onPressed: () {
-                                            setModalState(() => showSettings = !showSettings);
-                                          },
-                                          tooltip: 'Toggle Parental Control Restrictions Settings',
-                                          constraints: const BoxConstraints(),
-                                          padding: const EdgeInsets.all(4),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      'Balance: RM ${currentTotal.toStringAsFixed(2)} 🟡',
-                                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF8B5CF6)),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Container(
-                                width: isNarrow ? constraints.maxWidth : constraints.maxWidth * 0.50,
-                                alignment: isNarrow ? Alignment.centerLeft : Alignment.centerRight,
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    ElevatedButton.icon(
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: const Color(0xFF8B5CF6),
-                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                        elevation: 0,
-                                      ),
-                                      icon: const Icon(Icons.download_rounded, color: Colors.white, size: 16),
-                                      label: const Text('Download Monthly Report', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                                      onPressed: () async {
-                                        Navigator.pop(context, true); 
-                                        
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(
-                                            content: Row(
-                                              children: [
-                                                const SizedBox(
-                                                  width: 16, height: 16,
-                                                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                                                ),
-                                                const SizedBox(width: 16),
-                                                Text('Generating monthly report statement for $childName...'),
-                                              ],
-                                            ),
-                                            duration: const Duration(seconds: 3),
-                                          ),
-                                        );
-
-                                        final WalletModel childWalletContext = WalletModel(
-                                          profileId: childId,
-                                          totalBalance: currentTotal,
-                                          saveBalance: currentTotal * 0.70,
-                                          spendBalance: currentTotal * 0.20,
-                                          shareBalance: currentTotal * 0.10,
-                                        );
-
-                                        try {
-                                          await SummaryService().generateAndDownloadReport(
-                                            context, 
-                                            childWalletContext,
-                                            childName,
-                                          );
-                                          if (context.mounted) {
-                                            ScaffoldMessenger.of(context).clearSnackBars();
-                                          }
-                                        } catch (e) {
-                                          if (context.mounted) {
-                                            ScaffoldMessenger.of(context).clearSnackBars();
-                                            ScaffoldMessenger.of(context).showSnackBar(
-                                              SnackBar(
-                                                backgroundColor: Colors.redAccent,
-                                                content: Text('Failed to compile document: $e'),
-                                              ),
-                                            );
-                                          }
-                                        }
-                                      },
-                                    ),
-                                    const SizedBox(width: 8),
-                                    ElevatedButton.icon(
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: const Color(0xFF10B981),
-                                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                        elevation: 0,
-                                      ),
-                                      icon: const Icon(Icons.send_rounded, color: Colors.white, size: 16),
-                                      label: const Text('Transfer', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                                      onPressed: () {
-                                        Navigator.pop(context, true); 
-                                        _showTransferMoneyBottomSheet(childName, childId);
-                                      },
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          );
-                        },
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 20),
-
-                  // --- 2. 🔀 DYNAMIC BODY EXCLUSION ROUTER ---
-                  Expanded(
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 250),
-                      child: (showSettings && !isLoadingConfig)
-                          ? Form(
-                              key: settingsFormKey,
-                              child: ListView(
-                                key: const ValueKey('parent_settings_view'),
-                                physics: const BouncingScrollPhysics(),
-                                children: [
-                                  const Padding(
-                                    padding: EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
-                                    child: Text('Safety Guardrails 🔐', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1F2937))),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  CheckboxListTile(
-                                    title: const Text('Freeze Wallet', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF374151))),
-                                    subtitle: const Text('Instantly blocks outbound merchant payments and dynamic fun-budget disbursements.', style: TextStyle(fontSize: 11)),
-                                    value: isAccountFrozen,
-                                    activeColor: const Color(0xFF8B5CF6),
-                                    controlAffinity: ListTileControlAffinity.leading,
-                                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                                    onChanged: (val) async {
-                                      setModalState(() => isAccountFrozen = val ?? false);
-                                      await supabaseService.client.from('profiles').update({'is_frozen': isAccountFrozen}).eq('id', childId);
-                                    },
-                                  ),
-                                  const Divider(color: Color(0xFFF1F5F9)),
-                                  CheckboxListTile(
-                                    title: const Text('Restrict Feed Content', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF374151))),
-                                    subtitle: const Text('Simplifies application layout parameters; hides experimental transaction models.', style: TextStyle(fontSize: 11)),
-                                    value: restrictVisibility,
-                                    activeColor: const Color(0xFF8B5CF6),
-                                    controlAffinity: ListTileControlAffinity.leading,
-                                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                                    onChanged: (val) async {
-                                      setModalState(() => restrictVisibility = val ?? false);
-                                      await supabaseService.client.from('profiles').update({'parental_content_restriction': restrictVisibility}).eq('id', childId);
-                                    },
-                                  ),
-                                  const Divider(color: Color(0xFFF1F5F9)),
-                                  
-                                  // 🎬 QUEST CALIBRATION INTERFACE ELEMENTS (TYPING VARIANT)
-                                  const Padding(
-                                    padding: EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
-                                    child: Text('Quest Incentive Calibration 🎞️', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1F2937))),
-                                  ),
-                                  const SizedBox(height: 8),
-
-                                  // ✏️ TYPE FIELD 1: DYNAMIC XP REWARD
-                                  TextFormField(
-                                    controller: xpController,
-                                    keyboardType: TextInputType.number,
-                                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                                    decoration: InputDecoration(
-                                      labelText: 'Video Quest XP Payout',
-                                      suffixText: 'XP',
-                                      prefixIcon: const Icon(Icons.bolt_rounded, color: Color(0xFF8B5CF6), size: 20),
-                                      filled: true,
-                                      fillColor: const Color(0xFFF9FAFB),
-                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                    ),
-                                    onChanged: (val) async {
-                                      final parsedXp = int.tryParse(val.trim());
-                                      if (parsedXp != null && parsedXp >= 0) {
-                                        currentVideoXp = parsedXp;
-                                        await supabaseService.client.from('profiles').update({'video_xp_reward': currentVideoXp}).eq('id', childId);
-                                      }
-                                    },
-                                  ),
-                                  const SizedBox(height: 16),
-
-                                  // ✏️ TYPE FIELD 2: DYNAMIC ALLOWANCE REWARD
-                                  TextFormField(
-                                    controller: coinsController,
-                                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                                    decoration: InputDecoration(
-                                      labelText: 'Allowance Coin Reward',
-                                      prefixText: 'RM ',
-                                      prefixIcon: const Icon(Icons.payments_rounded, color: Color(0xFF10B981), size: 20),
-                                      filled: true,
-                                      fillColor: const Color(0xFFF9FAFB),
-                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                    ),
-                                    onChanged: (val) async {
-                                      final parsedCoins = double.tryParse(val.trim());
-                                      if (parsedCoins != null && parsedCoins >= 0.0) {
-                                        currentVideoCoins = parsedCoins;
-                                        await supabaseService.client.from('profiles').update({'video_coin_reward': currentVideoCoins}).eq('id', childId);
-                                      }
-                                    },
-                                  ),
-                                  const SizedBox(height: 8),
-                                ],
-                              ),
-                            )
-                          : Column(
-                              key: const ValueKey('feeds_dashboard_view'),
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                // --- Hub Segmented Navigation Tab Selection Switcher ---
-                                Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.all(4),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFF3F4F6),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: InkWell(
-                                          onTap: () => setModalState(() => _selectedTabIdx = 0),
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(vertical: 10),
-                                            decoration: BoxDecoration(
-                                              color: _selectedTabIdx == 0 ? Colors.white : Colors.transparent,
-                                              borderRadius: BorderRadius.circular(10),
-                                              boxShadow: _selectedTabIdx == 0 ? [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2))] : [],
-                                            ),
-                                            alignment: Alignment.center,
-                                            child: Text(
-                                              'Tasks 🎯',
-                                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: _selectedTabIdx == 0 ? const Color(0xFF8B5CF6) : Colors.grey[600]),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      Expanded(
-                                        child: InkWell(
-                                          onTap: () => setModalState(() => _selectedTabIdx = 1),
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(vertical: 10),
-                                            decoration: BoxDecoration(
-                                              color: _selectedTabIdx == 1 ? Colors.white : Colors.transparent,
-                                              borderRadius: BorderRadius.circular(10),
-                                              boxShadow: _selectedTabIdx == 1 ? [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2))] : [],
-                                            ),
-                                            alignment: Alignment.center,
-                                            child: Text(
-                                              'Saving Goals 💎',
-                                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: _selectedTabIdx == 1 ? const Color(0xFF8B5CF6) : Colors.grey[600]),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 16),
-                                
-                                // --- Tasks vs Goals Stream Injection Area ---
-                                Expanded(
-                                  child: AnimatedSwitcher(
-                                    duration: const Duration(milliseconds: 200),
-                                    child: _selectedTabIdx == 0 
-                                        ? _buildTasksTabFeed(childId, setModalState) 
-                                        : _buildGoalsTabFeed(childId, setModalState),
-                                  ),
-                                ),
-                              ],
-                            ),
-                    ),
-                  ),
-                  
-                  const SizedBox(height: 16),
-                  
-                  // --- 3. BOTTOM ACTION ROW ---
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF8B5CF6),
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            elevation: 0,
-                          ),
-                          icon: const Icon(Icons.add_task_rounded, color: Colors.white, size: 18),
-                          label: const Text('Assign Mission', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                          onPressed: () {
-                            Navigator.pop(context, true); 
-                            _showAddTaskBottomSheet(childName, childId); 
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Colors.redAccent, width: 1.5),
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          ),
-                          icon: const Icon(Icons.person_remove_rounded, color: Colors.redAccent, size: 18),
-                          label: const Text('Remove Child', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
-                          onPressed: () async {
-                            final bool removed = await _handleRemoveChildFromHousehold(childId, childName);
-                            if (removed && context.mounted) {
-                              Navigator.pop(context, true); 
-                            }
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-
-    // 🎯 THE CONDITIONAL TELEMETRY CHECK:
-    if (shouldRefresh == true) {
-      debugPrint('🔄 Fired action button: Executing dynamic background synchronization refresh...');
+  // Handle downstream structural route redirections cleanly
+  switch (forwardAction) {
+    case 'transfer':
+      _showTransferMoneyBottomSheet(childName, childId);
+      break;
+    case 'assign':
+      _showAddTaskBottomSheet(childName, childId);
+      break;
+    case 'remove':
+      final bool removed = await _handleRemoveChildFromHousehold(childId, childName);
+      if (removed) _refreshData();
+      break;
+    default:
       _refreshData();
-    } else {
-      debugPrint('🤫 Swiped down/dismissed without action: Absolute silent close.');
-    }
+  }
 }
-
-// 🎯 📝 SUB-MODULE: Render Tasks List (Tab 0) - Fully Fixed for Parents & Kids
-Widget _buildTasksTabFeed(String childId, StateSetter setModalState) {
-    return FutureBuilder<List<dynamic>>(
-      key: const ValueKey('tasks_tab_stream'),
-      future: () async {
-        // 🔬 DIAGNOSTIC LOG
-        debugPrint('🔍 PARENT OVERLAY: Fetching tasks for childId: $childId');
-        final res = await supabaseService.client
-            .from('tasks')
-            .select('*')
-            .eq('profile_id', childId)
-            .order('id', ascending: false);
-        debugPrint('🎯 PARENT OVERLAY: Tasks returned count: ${res.length} payload: $res');
-        return res;
-      }(),
-      builder: (context, taskSnapshot) {
-        if (taskSnapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator(color: Color(0xFF8B5CF6)));
-        }
-        final tasks = taskSnapshot.data ?? [];
-        if (tasks.isEmpty) {
-          return const Center(
-            child: Text('No missions assigned yet.', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w500)),
-          );
-        }
-
-        return ListView.builder(
-          itemCount: tasks.length,
-          physics: const BouncingScrollPhysics(),
-          itemBuilder: (context, idx) {
-            final t = tasks[idx];
-            final String taskId = t['id'].toString();
-            final String title = t['title'] ?? 'Secret Mission';
-            final double reward = (t['reward_amount'] ?? 0.0).toDouble();
-            final String status = t['status'] ?? 'assigned';
-            final String? proofUrl = t['proof_url']; 
-
-            final bool isPending = status == 'pending';
-            final bool isCompleted = status == 'completed';
-
-            return Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: isPending ? const Color(0xFFFFF7ED) : const Color(0xFFF9FAFB),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: isPending ? const Color(0xFFFFEDD5) : Colors.transparent, width: 1.5),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                            const SizedBox(height: 4),
-                            Text('Reward: RM ${reward.toStringAsFixed(2)} 🟡', style: const TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold)),
-                          ],
-                        ),
-                      ),
-                      if (!isCompleted)
-                        IconButton(
-                          icon: Icon(Icons.delete_outline_rounded, color: Colors.red[400]),
-                          onPressed: () async {
-                            await _handleDeleteTask(taskId, title);
-                            // 🎯 DISMISS WITH REFRESH SIGNAL
-                            if (context.mounted) Navigator.pop(context, true);
-                          },
-                        )
-                      else
-                        Icon(Icons.lock_outline_rounded, color: Colors.grey[400]),
-                    ],
-                  ),
-
-                  // 📷 PHOTO PROOF ELEMENT
-                  if (proofUrl != null && proofUrl.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    const Text('Task Completion Proof:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF4B5563))),
-                    const SizedBox(height: 6),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: GestureDetector(
-                        onTap: () => _showFullImagePreview(proofUrl),
-                        child: Stack(
-                          alignment: Alignment.bottomRight,
-                          children: [
-                            Image.network(
-                              proofUrl,
-                              height: 160,
-                              width: double.infinity,
-                              fit: BoxFit.cover,
-                              errorBuilder: (c, e, s) => Container(
-                                height: 60,
-                                color: const Color(0xFFF3F4F6),
-                                child: const Center(child: Text('⚠️ Image display failure')),
-                              ),
-                            ),
-                            Container(
-                              margin: const EdgeInsets.all(8),
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(color: Colors.black.withOpacity(0.6), borderRadius: BorderRadius.circular(6)),
-                              child: const Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.fullscreen_rounded, color: Colors.white, size: 14),
-                                  SizedBox(width: 2),
-                                  Text('Zoom', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                                ],
-                              ),
-                            )
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-
-                  // Action approval buttons if task status is pending
-                  if (isPending) ...[
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        TextButton.icon(
-                          style: TextButton.styleFrom(foregroundColor: Colors.red[600]),
-                          icon: const Icon(Icons.cancel_outlined, size: 16),
-                          label: const Text('Reject', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                          onPressed: () async {
-                            await _rejectTaskProof(taskId, title);
-                            // 🎯 DISMISS WITH REFRESH SIGNAL
-                            if (context.mounted) Navigator.pop(context, true);
-                          },
-                        ),
-                        const SizedBox(width: 8),
-                        ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF16A34A),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                            elevation: 0,
-                          ),
-                          icon: const Icon(Icons.check_circle, size: 16, color: Colors.white),
-                          label: const Text('Approve & Pay', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                          onPressed: () async {
-                            await _approveTaskAndDisburseFunds(taskId, childId, reward, title);
-                            // 🎯 DISMISS WITH REFRESH SIGNAL
-                            if (context.mounted) Navigator.pop(context, true);
-                          },
-                        ),
-                      ],
-                    ),
-                  ],
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildGoalsTabFeed(String childId, StateSetter setModalState) {
-    return FutureBuilder<List<dynamic>>(
-      key: const ValueKey('goals_tab_stream'),
-      future: () async {
-        return await supabaseService.client
-            .from('savings_goals')
-            .select('*')
-            .eq('profile_id', childId)
-            .order('id', ascending: false);
-      }(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator(color: Color(0xFF8B5CF6)));
-        }
-
-        final allGoals = snapshot.data ?? [];
-
-        if (allGoals.isEmpty) {
-          return const Center(
-            child: Text('No saving goals set up yet.', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w500)),
-          );
-        }
-
-        final activeGoals = allGoals.where((g) => g['status'] == 'active' || g['status'] == 'pending_approval').toList();
-        final historicGoals = allGoals.where((g) => g['status'] == 'achieved' || g['status'] == 'completed').toList();
-
-        return ListView(
-          physics: const BouncingScrollPhysics(),
-          children: [
-            if (activeGoals.isNotEmpty) ...[
-              const Text('Current Active Target 🎯', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF4B5563))),
-              const SizedBox(height: 8),
-              ...activeGoals.map((g) {
-                final String goalId = g['id'].toString();
-                final String goalName = g['goal_name'] ?? 'Savings Goal';
-                final double targetPrice = (g['target_amount'] ?? 0.0).toDouble();
-                final bool isPending = g['status'] == 'pending_approval';
-
-                return FutureBuilder<Map<String, dynamic>?>(
-                  future: supabaseService.client
-                      .from('wallets')
-                      .select('save_balance')
-                      .eq('profile_id', childId)
-                      .maybeSingle(),
-                  builder: (context, walletSnapshot) {
-                    final walletData = walletSnapshot.data;
-                    final double currentSaved = walletData != null 
-                        ? (walletData['save_balance'] ?? 0.00).toDouble() 
-                        : 0.00;
-
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 20),
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: isPending ? const Color(0xFFFFF7ED) : const Color(0xFFF9FAFB),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: isPending ? const Color(0xFFFFEDD5) : const Color(0xFFE5E7EB), width: 1.5),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  isPending ? '✨ Proposed: $goalName' : goalName,
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold, 
-                                    fontSize: 16, 
-                                    color: isPending ? const Color(0xFFC2410C) : const Color(0xFF1F2937),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                'RM ${targetPrice.toStringAsFixed(2)}', 
-                                style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF2563EB)),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
-                          Row(
-                            children: [
-                              Text(
-                                'Progress: RM ${currentSaved.toStringAsFixed(2)} saved',
-                                style: TextStyle(color: Colors.grey[600], fontSize: 13, fontWeight: FontWeight.w500),
-                              ),
-                              const SizedBox(width: 6),
-                              Text('•', style: TextStyle(color: Colors.grey[400])),
-                              const SizedBox(width: 6),
-                              Text(
-                                '${targetPrice > 0 ? ((currentSaved / targetPrice) * 100).toStringAsFixed(0) : 0}% Completed',
-                                style: const TextStyle(color: Color(0xFF8B5CF6), fontSize: 13, fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-                          
-                          if (!isPending) ...[
-                            const SizedBox(height: 14),
-                            ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: g['status'] == 'achieved' 
-                                    ? const Color(0xFF94A3B8) 
-                                    : const Color(0xFF10B981), 
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(vertical: 10),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                elevation: 0,
-                              ),
-                              icon: Icon(
-                                g['status'] == 'achieved' ? Icons.check_circle_outline_rounded : Icons.stars_rounded, 
-                                size: 16
-                              ),
-                              label: Text(
-                                g['status'] == 'achieved' ? 'Achieved' : 'Mark as Achieved! 🏆', 
-                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                              ),
-                              onPressed: g['status'] == 'achieved' 
-                                  ? null 
-                                  : () async {
-                                      await _handleMarkGoalAsAchieved(goalId, goalName);
-                                      // 🎯 DISMISS WITH REFRESH SIGNAL
-                                      if (context.mounted) Navigator.pop(context, true);
-                                    },
-                            ),
-                          ],
-                          if (isPending) ...[
-                            const SizedBox(height: 14),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.end,
-                              children: [
-                                OutlinedButton.icon(
-                                  style: OutlinedButton.styleFrom(
-                                    side: const BorderSide(color: Color(0xFFEF4444), width: 1.5),
-                                    foregroundColor: const Color(0xFFEF4444),
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                  ),
-                                  icon: const Icon(Icons.close_rounded, size: 14),
-                                  label: const Text('Reject', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                                  onPressed: () async {
-                                    await supabaseService.client
-                                        .from('savings_goals')
-                                        .delete()
-                                        .eq('id', goalId);
-                                        
-                                    // 🎯 DISMISS WITH REFRESH SIGNAL
-                                    if (context.mounted) Navigator.pop(context, true);
-                                    
-                                    if (context.mounted) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          backgroundColor: Color(0xFFEF4444),
-                                          content: Text('Goal request rejected and removed.'),
-                                        ),
-                                      );
-                                    }
-                                  },
-                                ),
-                                const SizedBox(width: 8),
-                                
-                                ElevatedButton.icon(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF16A34A),
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                    elevation: 0,
-                                  ),
-                                  icon: const Icon(Icons.check_rounded, size: 14),
-                                  label: const Text('Approve New Goal', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                                  onPressed: () async {
-                                    await supabaseService.client.from('savings_goals').update({'status': 'active'}).eq('id', goalId);
-                                    await supabaseService.client.from('wallets').update({'save_balance': 0.00}).eq('profile_id', childId);
-                                    
-                                    // 🎯 DISMISS WITH REFRESH SIGNAL
-                                    if (context.mounted) Navigator.pop(context, true);
-                                  },
-                                ),
-                              ],
-                            )
-                          ]
-                        ],
-                      ),
-                    );
-                  },
-                );
-              }).toList(),
-            ] else ...[
-              const Center(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                  child: Text('No active target right now.', style: TextStyle(color: Colors.grey, fontSize: 13)),
-                ),
-              ),
-            ],
-
-            if (historicGoals.isNotEmpty) ...[
-              const Divider(height: 32, color: Color(0xFFE5E7EB)),
-              const Text('Achieved Dreams Vault 🏆', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF10B981))),
-              const SizedBox(height: 8),
-              ...historicGoals.map((g) {
-                final String goalName = g['goal_name'] ?? 'Past Goal';
-                final double targetPrice = (g['target_amount'] ?? 0.0).toDouble();
-
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFECFDF5),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xD1A7F3D0), width: 1),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        children: [
-                          const Text('👑', style: TextStyle(fontSize: 16)),
-                          const SizedBox(width: 8),
-                          Text(goalName, style: const TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF065F46), fontSize: 14)),
-                        ],
-                      ),
-                      Text('RM ${targetPrice.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF047857), fontSize: 14)),
-                    ],
-                  ),
-                );
-              }).toList(),
-            ],
-          ],
-        );
-      },
-    );
-  }
 
   // ⚡ MUTATION: Flips target milestone status context to achieved
   Future<void> _handleMarkGoalAsAchieved(String goalId, String goalName) async {
@@ -1209,17 +380,21 @@ Widget _buildTasksTabFeed(String childId, StateSetter setModalState) {
 
                     if (walletRecords.isNotEmpty) {
                       final currentWallet = walletRecords.first;
+                      
                       final double currentTotal = (currentWallet['total_balance'] ?? 0.0).toDouble();
                       final double currentSave = (currentWallet['save_balance'] ?? 0.0).toDouble();
                       final double currentSpend = (currentWallet['spend_balance'] ?? 0.0).toDouble();
                       final double currentShare = (currentWallet['share_balance'] ?? 0.0).toDouble();
 
-                      await supabaseService.client.from('wallets').update({
-                        'total_balance': currentTotal + transferAmount,
-                        'save_balance': currentSave + saveIncrement,
-                        'spend_balance': currentSpend + spendIncrement,
-                        'share_balance': currentShare + shareIncrement,
-                      }).eq('profile_id', childId);
+                      await supabaseService.client
+                          .from('wallets')
+                          .update({
+                            'total_balance': currentTotal + transferAmount,
+                            'save_balance': currentSave + saveIncrement,
+                            'spend_balance': currentSpend + spendIncrement,
+                            'share_balance': currentShare + shareIncrement,
+                          })
+                          .eq('profile_id', childId);
                     } else {
                       await supabaseService.client.from('wallets').insert({
                         'profile_id': childId,
@@ -1726,6 +901,7 @@ Future<void> _approveTaskAndDisburseFunds(String taskId, String childId, double 
 Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
     final profile = snapshot.data!.profile;
     final bool isParent = profile.role == 'parent';
+    final wallet = snapshot.data!.wallet;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 24.0),
@@ -1755,7 +931,7 @@ Widget _buildHomeDashboard(AsyncSnapshot<DashboardData> snapshot) {
             const SizedBox(height: 12),
             _buildMockBankLinkCard(),
             const SizedBox(height: 24),
-            _buildLinkedChildrenSection(),
+            _buildLinkedChildrenSection(wallet),
           ],
 
           // --- CHILD SPECIFIC CONTENT PANEL CONTENT ONLY ---
@@ -1814,9 +990,9 @@ Widget _buildConditionalWrapper({required bool isFlexed, required Widget child})
         ((wallet.spendBalance ?? 0.0) + (wallet.saveBalance ?? 0.0) + (wallet.shareBalance ?? 0.0));
 
     // 2. Calculate the 70/20/10 split dynamically so it matches the bottom sheet
-    final double saveAllocated = totalBalance * 0.70;
-    final double spendAllocated = totalBalance * 0.20;
-    final double shareAllocated = totalBalance * 0.10;
+    final double saveAllocated = (wallet.saveBalance ?? 0.0).toDouble();
+    final double spendAllocated = (wallet.spendBalance ?? 0.0).toDouble();
+    final double shareAllocated = (wallet.shareBalance ?? 0.0).toDouble();
 
     // 🏷️ Combined Header: Places Total Balance and legends cleanly below the main title
     final Widget planHeader = Column(
@@ -1890,7 +1066,7 @@ Widget _buildConditionalWrapper({required bool isFlexed, required Widget child})
       style: ElevatedButton.styleFrom(
         backgroundColor: const Color(0xFF1F2937),
         elevation: 0,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
@@ -1934,68 +1110,26 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
   final TextEditingController referenceController = TextEditingController();
   final formKey = GlobalKey<FormState>();
   bool isProcessing = false;
-  bool isWalletFrozen = false; // Tracks if the profile is currently frozen
+  bool isWalletFrozen = false; 
   bool isLoadingConfig = true;
+  
+  String activeMode = 'pay'; 
+  // Tracks whether the scanner should be active within the Pay tab frame
+  bool isScannerActive = true; 
 
-  // 🧮 SMART RULE ALIGNMENT: Calculate available funds dynamically as 20% of total_balance
   final double liquidAvailableFunds = ((wallet.totalBalance ?? 0.00) * 0.20).toDouble();
-
-  // 🛠️ SMART QR ROUTER: Handles desktop simulation vs mobile behavior safely without crashing
-  void _handleQRAction(BuildContext context, StateSetter setLocalState) {
-    final bool isComputer = kIsWeb || 
-        defaultTargetPlatform == TargetPlatform.macOS || 
-        defaultTargetPlatform == TargetPlatform.windows || 
-        defaultTargetPlatform == TargetPlatform.linux;
-
-    if (isComputer) {
-      showDialog(
-        context: context,
-        builder: (dialogContext) {
-          return AlertDialog(
-            title: const Text('🖥️ QR Scanner Simulator'),
-            content: const Text(
-              'Your computer setup does not use a physical mobile scanner plugin.\n\n'
-              'Select a mock 16-digit test QR payload to inject:',
-            ),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            actionsAlignment: MainAxisAlignment.spaceEvenly,
-            actions: [
-              TextButton(
-                onPressed: () {
-                  setLocalState(() => accountController.text = '1642839482910011');
-                  Navigator.pop(dialogContext);
-                },
-                child: const Text('Inject Code A (16-digits)'),
-              ),
-              TextButton(
-                onPressed: () {
-                  setLocalState(() => accountController.text = '9876543210987654');
-                  Navigator.pop(dialogContext);
-                },
-                child: const Text('Inject Code B (16-digits)'),
-              ),
-            ],
-          );
-        },
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Mobile camera stream placeholder. Import mobile_scanner to scan real QR lines.'),
-        ),
-      );
-    }
-  }
 
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
+    // 🎯 HARD-LOCK LIFECYCLE GATES: Forces explicit close interaction routes
+    isDismissible: false,
+    enableDrag: false,
     backgroundColor: Colors.transparent,
     builder: (context) => StatefulBuilder(
       builder: (BuildContext context, StateSetter setLocalState) {
         final String? currentProfileId = supabaseService.currentUserId;
 
-        // 📡 LIVE FETCH: Verify current frozen state status straight from profiles metadata
         if (isLoadingConfig && currentProfileId != null) {
           supabaseService.client
               .from('profiles')
@@ -2021,6 +1155,8 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
           );
         }
 
+        final bool isPayTab = activeMode == 'pay';
+
         return Container(
           decoration: const BoxDecoration(
             color: Colors.white,
@@ -2039,14 +1175,12 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
               Center(
                 child: Container(
                   width: 40, height: 5,
-                  margin: const EdgeInsets.only(bottom: 20),
+                  margin: const EdgeInsets.only(bottom: 16),
                   decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)),
                 ),
               ),
               
-              // --- DYNAMIC CONDITION ARCHITECTURE ---
               if (isWalletFrozen) ...[
-                // 🔒 LOCKED STATE VIEW LANE: Shows explicitly when account has been frozen
                 const SizedBox(height: 12),
                 const Center(child: Text('🔒', style: TextStyle(fontSize: 48))),
                 const SizedBox(height: 16),
@@ -2060,7 +1194,7 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16.0),
                   child: Text(
-                    'Oh no! Your account has been frozen by your parent. You are not able to pay for now.',
+                    'Oh no! Your account has been frozen by your parent. You are not able to pay or transfer for now.',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 13, color: Colors.grey[600], height: 1.4),
                   ),
@@ -2076,66 +1210,170 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
                   child: const Text('Close', style: TextStyle(color: Color(0xFF4B5563), fontWeight: FontWeight.bold)),
                 ),
               ] else ...[
-                // 🟢 STANDARD ACTIVE TRANSACTION VIEW LANE
+                // --- REPROPORTIONED CUSTOM SEGMENTED TABS (No line underneath) ---
                 Row(
-                  children: const [
-                    Text('🪙', style: TextStyle(fontSize: 24)),
-                    SizedBox(width: 8),
-                    Text(
-                      'Simulate Pay & Transfer', 
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Disburse Funds',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Cancel', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
                     ),
                   ],
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF3F4F6),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Row(
+                    children: [
+                      // Pay Button Segment
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () {
+                            setLocalState(() {
+                              activeMode = 'pay';
+                              isScannerActive = accountController.text.isEmpty; 
+                            });
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                            decoration: BoxDecoration(
+                              color: isPayTab ? Colors.white : Colors.transparent,
+                              borderRadius: BorderRadius.circular(10),
+                              boxShadow: isPayTab ? [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.06),
+                                  blurRadius: 6,
+                                  offset: const Offset(0, 3),
+                                )
+                              ] : [],
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Text('🛒', style: TextStyle(fontSize: 16)),
+                                const SizedBox(width: 8), 
+                                Text(
+                                  'Pay',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                    color: isPayTab ? const Color(0xFF1F2937) : const Color(0xFF6B7280),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      
+                      const SizedBox(width: 6), 
+
+                      // Transfer Button Segment
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () {
+                            setLocalState(() {
+                              activeMode = 'transfer';
+                              isScannerActive = false; // Disposes camera view immediately
+                            });
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                            decoration: BoxDecoration(
+                              color: !isPayTab ? Colors.white : Colors.transparent,
+                              borderRadius: BorderRadius.circular(10),
+                              boxShadow: !isPayTab ? [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.06),
+                                  blurRadius: 6,
+                                  offset: const Offset(0, 3),
+                                )
+                              ] : [],
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Text('💸', style: TextStyle(fontSize: 16)),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Transfer',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                    color: !isPayTab ? const Color(0xFF1F2937) : const Color(0xFF6B7280),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
 
                 Form(
                   key: formKey,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      TextFormField(
-                        controller: accountController,
-                        keyboardType: TextInputType.number,
-                        decoration: InputDecoration(
-                          labelText: 'Recipient Account Number',
-                          hintText: 'e.g., 164283948291 or Phone Number',
-                          prefixIcon: const Icon(Icons.account_balance_wallet_rounded, color: Color(0xFF8B5CF6), size: 20),
-                          suffixIcon: Padding(
-                            padding: const EdgeInsets.all(6.0),
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFEDE9FE), 
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: InkWell(
-                                onTap: () => _handleQRAction(context, setLocalState),
-                                borderRadius: BorderRadius.circular(8),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 10.0),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: const [
-                                      Text(
-                                        'Scan Payment QR Code',
-                                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF6D28D9)),
-                                      ),
-                                      SizedBox(width: 6),
-                                      Icon(Icons.qr_code_scanner_rounded, color: Color(0xFF6D28D9), size: 18),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                          filled: true,
-                          fillColor: const Color(0xFFF9FAFB),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                      // --- INLINE EMBEDDED SCANNER / INPUT LOGIC LANE ---
+                      if (isPayTab && isScannerActive) ...[
+                        const Text(
+                          'Align Merchant QR Code within the frame:',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF4B5563)),
                         ),
-                        validator: (val) => val == null || val.trim().isEmpty ? 'Please enter or scan a valid target recipient ID' : null,
-                      ),
-                      const SizedBox(height: 12),
+                        const SizedBox(height: 8),
 
+                        EmbeddedQRScanner(
+                          onCodeScanned: (scannedCode) {
+                            setLocalState(() {
+                              accountController.text = scannedCode;
+                              isScannerActive = false; 
+                            });
+                          },
+                        ),
+
+                        const SizedBox(height: 8),
+                        const SizedBox(height: 8),
+                      ] else ...[
+                        TextFormField(
+                          controller: accountController,
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(
+                            labelText: isPayTab ? 'Merchant / Counter Code' : 'Recipient Account Number',
+                            hintText: isPayTab ? 'Captured QR Payload Code' : 'e.g., 164283948291 or Phone Number',
+                            prefixIcon: Icon(
+                              isPayTab ? Icons.storefront_rounded : Icons.account_balance_wallet_rounded, 
+                              color: const Color(0xFF8B5CF6), 
+                              size: 20,
+                            ),
+                            suffixIcon: isPayTab ? IconButton(
+                              icon: const Icon(Icons.qr_code_scanner_rounded, color: Color(0xFF6D28D9)),
+                              onPressed: () => setLocalState(() => isScannerActive = true),
+                              tooltip: 'Rescan QR',
+                            ) : null,
+                            filled: true,
+                            fillColor: const Color(0xFFF9FAFB),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                          ),
+                          validator: (val) => (val == null || val.trim().isEmpty) 
+                              ? (isPayTab ? 'Please type or capture a valid merchant code' : 'Please enter a target account') 
+                              : null,
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+
+                      // --- AMOUNT ---
                       TextFormField(
                         controller: amountController,
                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -2151,26 +1389,29 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
                           if (val == null || double.tryParse(val) == null) return 'Please input a valid number metric';
                           final double parsedAmount = double.parse(val);
                           if (parsedAmount <= 0) return 'Transaction must be greater than RM 0.00';
-                          if (parsedAmount > liquidAvailableFunds) return 'Insufficient balance in your 20% Fun Bucket!';
+                          // Strict enforcement against the actual live spend bucket allocation
+                          if (parsedAmount > (wallet.spendBalance ?? 0.0)) return 'Insufficient balance in your Spend Bucket!';
                           return null;
                         },
                       ),
                       const SizedBox(height: 12),
 
+                      // --- REASON REFERENCE ---
                       TextFormField(
                         controller: referenceController,
                         decoration: InputDecoration(
-                          labelText: 'Payment Reference (What is this for?)',
-                          hintText: 'e.g., Lunch at Sunway canteen, Stationary, Toys',
+                          labelText: isPayTab ? 'Payment Description' : 'Transfer Note / Reference',
+                          hintText: isPayTab ? 'e.g., School canteen lunch, Stationary' : 'What is this money transfer for?',
                           prefixIcon: const Icon(Icons.description_rounded, color: Colors.grey, size: 20),
                           filled: true,
                           fillColor: const Color(0xFFF9FAFB),
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
                         ),
-                        validator: (val) => val == null || val.trim().isEmpty ? 'Please add a small payment reason description' : null,
+                        validator: (val) => val == null || val.trim().isEmpty ? 'Please add a small reason description' : null,
                       ),
                       const SizedBox(height: 24),
 
+                      // --- OUTBOUND SUBMIT BUTTON ---
                       ElevatedButton(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF1F2937),
@@ -2198,22 +1439,29 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
                                 .eq('profile_id', currentProfileId)
                                 .maybeSingle();
 
-                            if (walletSnapshot != null) {
-                              final double backendTotal = double.parse((walletSnapshot['total_balance'] ?? 0.0).toString());
+                        if (walletSnapshot != null) {
+                          final double backendTotal = (walletSnapshot['total_balance'] ?? 0.0).toDouble();
+                          final double backendSpend = (walletSnapshot['spend_balance'] ?? 0.0).toDouble();
 
-                              await Future.wait([
-                                supabaseService.client.from('wallets').update({
-                                  'total_balance': backendTotal - debitValue,
-                                }).eq('profile_id', currentProfileId),
+                          final String calculatedCategory = isPayTab 
+                              ? TransactionCategorizer.categorize(logTitle)
+                              : 'Peer Transfer';
 
-                                supabaseService.client.from('transactions').insert({
-                                  'profile_id': currentProfileId,
-                                  'title': '$logTitle (to $targetReceiverId)',
-                                  'amount': -debitValue, 
-                                  'category': 'Merchant Spend',
-                                  'created_at': DateTime.now().toIso8601String(),
-                                }),
-                              ]);
+                          await Future.wait([
+                            // Deducts the spent money from total tracking and your active fluid spend pool
+                            supabaseService.client.from('wallets').update({
+                              'total_balance': backendTotal - debitValue,
+                              'spend_balance': backendSpend - debitValue,
+                            }).eq('profile_id', currentProfileId),
+                            
+                            supabaseService.client.from('transactions').insert({
+                              'profile_id': currentProfileId,
+                              'title': '$logTitle (${isPayTab ? 'Paid to' : 'Sent to'} $targetReceiverId)',
+                              'amount': -debitValue, 
+                              'category': calculatedCategory, 
+                              'created_at': DateTime.now().toIso8601String(),
+                            }),
+                          ]);
 
                               if (context.mounted) {
                                 Navigator.pop(context); 
@@ -2222,7 +1470,7 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     backgroundColor: const Color(0xFF16A34A),
-                                    content: Text('🎉 Sent RM ${debitValue.toStringAsFixed(2)} to $targetReceiverId successfully!'),
+                                    content: Text('🎉 Successfully processed RM ${debitValue.toStringAsFixed(2)}!'),
                                   ),
                                 );
                               }
@@ -2239,7 +1487,10 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
                         },
                         child: isProcessing
                             ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                            : const Text('Authorize Instant Outbound Payment', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                            : Text(
+                                isPayTab ? 'Pay' : 'Transfer', 
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                              ),
                       ),
                     ],
                   ),
@@ -3156,32 +2407,104 @@ onPressed: () async {
     );
   }
 
-Widget _buildLinkedChildrenSection() {
+Widget _buildLinkedChildrenSection(WalletModel currentWalletContext) {
     final String? parentId = supabaseService.currentUserId;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            const Text(
-              'Managed Households 🧑‍🧑‍🧒',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+      Row(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                const Text(
+                  'Managed Kids 🧑‍🧒',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF3E8FF),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    'Active Panel',
+                    style: TextStyle(color: Color(0xFF7C3AED), fontSize: 10, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 8),
-            Container(
+          ),
+          // 📥 New Download Button added cleanly to the right side of the row layout
+          TextButton.icon(
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFF8B5CF6), // Matches your purple design profile
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF3E8FF),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Text(
-                'Active Panel',
-                style: TextStyle(color: Color(0xFF7C3AED), fontSize: 10, fontWeight: FontWeight.bold),
-              ),
             ),
-          ],
-        ),
+            icon: const Icon(Icons.download_for_offline_rounded, size: 22),
+            label: const Text(
+              'Download All Reports',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+            onPressed: () async {
+              final String? parentId = supabaseService.currentUserId;
+              if (parentId == null) return;
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Gathering data and packaging family statement archive...'),
+                ),
+              );
+
+              try {
+                // 1. Pull the raw database relation arrays in one quick trip
+                final List<dynamic> kidsList = await supabaseService.client
+                    .from('profiles')
+                    .select('''
+                      id, 
+                      username, 
+                      wallets(total_balance, save_balance, spend_balance, share_balance),
+                      transactions(title, category, amount, created_at)
+                    ''')
+                    .eq('parent_id', parentId)
+                    .eq('role', 'child');
+
+                if (kidsList.isEmpty) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).clearSnackBars();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('No active child accounts found to report.')),
+                    );
+                  }
+                  return;
+                }
+
+                // 2. 🚀 NEW CONCURRENT PIPELINE: Hand the dataset completely over to your service layer!
+                await SummaryService().generateAndShareHouseholdZipArchive(kidsList);
+
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).clearSnackBars();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      backgroundColor: Color(0xFF10B981),
+                      content: Text('🎉 Combined ZIP archive downloaded successfully!'),
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).clearSnackBars();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Failed to compile zip package: $e'), backgroundColor: Colors.redAccent),
+                  );
+                }
+              }
+            },
+          ),
+        ],
+      ),
         const SizedBox(height: 16),
         
         if (!_isBankLinked) ...[
@@ -3255,7 +2578,7 @@ Widget _buildLinkedChildrenSection() {
               }
 
               // 🌟 RESPONSIVE GRID GRID LAYOUT BLOCK
-         return LayoutBuilder(
+              return LayoutBuilder(
                 builder: (context, constraints) {
                   // If screen width is wider than 600px, use a two-column responsive split grid natively
                   final int crossAxisCount = constraints.maxWidth > 600 ? 2 : 1;
@@ -3319,8 +2642,34 @@ Widget _buildLinkedChildrenSection() {
                             // ✅ UPDATED REACTIVE LAYOUT CALL ROUTE:
                             onTap: () async { 
                               if (isApproved) {
-                                await _showParentTaskManagerBottomSheet(kidName, kidId);
-                                _refreshData(); // Automatically updates the screen when closed
+                                // Await the explicit configuration return parameter keys
+                                final String? forwardAction = await showModalBottomSheet<String>(
+                                  context: context,
+                                  isScrollControlled: true,
+                                  shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+                                  builder: (context) => ParentTaskManagerSheet(childName: kidName, childId: kidId),
+                                );
+                                
+                                if (forwardAction == null) {
+                                  _refreshData(); // Sync layout parameters anyway on standard swipe-dismissals
+                                  return;
+                                }
+
+                                // Branch execution pathways gracefully without overlay clipping traps
+                                switch (forwardAction) {
+                                  case 'transfer':
+                                    _showTransferMoneyBottomSheet(kidName, kidId);
+                                    break;
+                                  case 'assign':
+                                    _showAddTaskBottomSheet(kidName, kidId);
+                                    break;
+                                  case 'remove':
+                                    final bool removed = await _handleRemoveChildFromHousehold(kidId, kidName);
+                                    if (removed) _refreshData();
+                                    break;
+                                  default:
+                                    _refreshData();
+                                }
                               } else {
                                 _handleInstantApproval(kidId, kidName);
                               }
@@ -3570,6 +2919,62 @@ class RestrictedPagePlaceholder extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class EmbeddedQRScanner extends StatefulWidget {
+  final Function(String) onCodeScanned;
+
+  const EmbeddedQRScanner({super.key, required this.onCodeScanned});
+
+  @override
+  State<EmbeddedQRScanner> createState() => _EmbeddedQRScannerState();
+}
+
+class _EmbeddedQRScannerState extends State<EmbeddedQRScanner> {
+  // Creating the controller inside initState guarantees it initializes exactly ONCE
+  late final MobileScannerController _scannerController;
+
+  @override
+  void initState() {
+    super.initState();
+    _scannerController = MobileScannerController(
+      detectionSpeed: DetectionSpeed.noDuplicates,
+      facing: CameraFacing.back,
+      autoStart: true, // Let it boot up naturally once
+    );
+  }
+
+  @override
+  void dispose() {
+    // Explicitly shut down the lens when unmounted from the tree
+    _scannerController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 160,
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: MobileScanner(
+        controller: _scannerController,
+        onDetect: (capture) {
+          final List<Barcode> barcodes = capture.barcodes;
+          for (final barcode in barcodes) {
+            final String? codeValue = barcode.rawValue;
+            if (codeValue != null && codeValue.trim().isNotEmpty) {
+              widget.onCodeScanned(codeValue.trim());
+              break;
+            }
+          }
+        },
       ),
     );
   }

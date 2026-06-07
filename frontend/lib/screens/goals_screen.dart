@@ -45,17 +45,17 @@ void _fetchSavingsGoalsData() {
                 .order('id', ascending: false), 
             supabaseService.client
                 .from('wallets')
-                .select('total_balance') // 🎯 CHANGED: Pull total_balance instead of save_balance
+                // 🎯 FIX: Select the exact database column holding the locked savings pool
+                .select('save_balance') 
                 .eq('profile_id', profileId)
                 .maybeSingle(),
           ]);
 
           final List<dynamic> allGoals = futures[0] as List<dynamic>;
           final walletData = futures[1] as Map<String, dynamic>?;
-          
-          // 🧮 SMART SPLIT: Read global absolute balance and scale by the 70% rule
-          final double rawTotalBalance = walletData != null ? (walletData['total_balance'] ?? 0.00).toDouble() : 0.00;
-          final double mathematicalSavedProgress = rawTotalBalance * 0.70;
+
+          // 🧮 Read the explicit, true save balance pool from your database row context
+          final double actualSavedProgress = walletData != null ? (walletData['save_balance'] ?? 0.00).toDouble() : 0.00;
 
           // Map dynamic array data payloads seamlessly with the scaled balance metric
           return allGoals.map((goal) {
@@ -64,7 +64,7 @@ void _fetchSavingsGoalsData() {
               'goal_name': goal['goal_name'],
               'target_amount': goal['target_amount'],
               'status': goal['status'] ?? 'active',
-              'current_amount': mathematicalSavedProgress, // 🎯 Restored tracking matching the 70% Save Rule
+              'current_amount': actualSavedProgress, // 🎯 Restored tracking matching the 70% Save Rule
             };
           }).toList();
         }();

@@ -5,6 +5,7 @@ import '../supabase_service.dart';
 import '../models.dart';
 import '../services/summary_service.dart';
 import 'dart:convert';
+import '../services/transaction_categorizer.dart'; 
 
 class MoneyReportScreen extends StatefulWidget {
   const MoneyReportScreen({Key? key}) : super(key: key);
@@ -34,41 +35,65 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
 
   // 🧮 Pure Data Engine: Analyzes data to construct dynamic UI parameters
   Future<Map<String, dynamic>> _fetchRealReportAggregates(String profileId) async {
-    // 1. Concurrently fetch child transactions AND their live verified wallet status
+    // 1. Concurrently fetch child transactions, live wallet data, AND profile metadata rows 🚀
     final futures = await Future.wait([
       supabaseService.client
           .from('transactions')
-          .select('amount, category, created_at')
+          .select('title, amount, category, created_at')
           .eq('profile_id', profileId)
           .order('created_at', ascending: false),
       supabaseService.client
           .from('wallets')
-          .select('total_balance')
+          // Pulling all rule allocations concurrently
+          .select('total_balance, save_balance, spend_balance, share_balance')
           .eq('profile_id', profileId)
+          .maybeSingle(),
+      supabaseService.client 
+          .from('profiles')
+          .select('username')
+          .eq('id', profileId)
           .maybeSingle(),
     ]);
 
     final List<dynamic> txs = futures[0] as List<dynamic>;
     final Map<String, dynamic>? walletData = futures[1] as Map<String, dynamic>?;
+    final Map<String, dynamic>? profileData = futures[2] as Map<String, dynamic>?;
 
     // Read live real-time total balance directly from the database table context
     final double liveTotalBalance = walletData != null ? (walletData['total_balance'] ?? 0.00).toDouble() : 0.00;
+    final double liveSaveBalance = walletData != null ? (walletData['save_balance'] ?? 0.00).toDouble() : 0.00;
+    final double liveSpendBalance = walletData != null ? (walletData['spend_balance'] ?? 0.00).toDouble() : 0.00;
+    final double liveShareBalance = walletData != null ? (walletData['share_balance'] ?? 0.00).toDouble() : 0.00;
+    final String username = profileData != null ? (profileData['username'] ?? 'Young Saver') : 'Young Saver';
 
     double cumulativeEarned = 0.0;
     double cumulativeSpent = 0.0;
     
-    // Dynamic breakout variables for consumer tracking boxes
-    double snacksSpent = 0.0;
-    double entertainmentSpent = 0.0;
+    // 🎯 DYNAMIC MAP CONTAINER: Aggregates categorical balances safely 
+    Map<String, double> categorySpendingTotals = {
+      '🍿 Snacks & Food': 0.0,
+      '🎮 Games & Entertainment': 0.0,
+      '📚 Education & School': 0.0,
+      '🚌 Public Transport & Commute': 0.0,
+      '🎁 Gifts & Sharing': 0.0,
+      '⚙️ General Spending': 0.0,
+    };
 
     // Structured week map tracking layout structures
     Map<String, Map<String, double>> realWeeklyBreakdown = {};
 
     for (var tx in txs) {
       final double amt = (tx['amount'] ?? 0.0).toDouble();
-      final String cat = tx['category'] ?? 'General';
+      final String title = tx['title'] ?? '';
       final String rawDate = tx['created_at'] ?? '';
       
+      // 🎯 DYNAMIC REPAIR CHECKPOINT: Fallback to local regex rule engine if tag is missing or generic
+      String cat = tx['category'] ?? 'General';
+      if (cat == 'General' || cat.trim().isEmpty) {
+        cat = TransactionCategorizer.categorize(title);
+      }
+      if (cat == 'General') cat = '⚙️ General Spending';
+
       // Determine what calendar week block identifier this row sits in using its timestamp
       String weekIdentifier = 'Week 1';
       if (rawDate.isNotEmpty) {
@@ -98,12 +123,12 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
         cumulativeSpent += absAmt;
         realWeeklyBreakdown[weekIdentifier]!['spent'] = realWeeklyBreakdown[weekIdentifier]!['spent']! + absAmt;
 
-        // Breakdown categorization metrics
-        if (cat.toLowerCase().contains('snack') || cat.toLowerCase().contains('food') || cat.toLowerCase().contains('makan')) {
-          snacksSpent += absAmt;
-        } else if (cat.toLowerCase().contains('game') || cat.toLowerCase().contains('entertain') || cat.toLowerCase().contains('video')) {
-          entertainmentSpent += absAmt;
-        }
+        // 🎯 SMART ACCUMULATION: Increment values dynamically matching layout keys
+        categorySpendingTotals.update(
+          cat,
+          (existingValue) => existingValue + absAmt,
+          ifAbsent: () => absAmt,
+        );
       }
     }
 
@@ -123,12 +148,15 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
       'totalEarned': cumulativeEarned,
       'totalSpent': cumulativeSpent,
       'savingsRate': derivedSavingsRate,
-      'snacksSpent': snacksSpent,
-      'entertainmentSpent': entertainmentSpent,
-      'savingsAllocated': calculatedTotalSaved, // 🌟 Calculated in-code perfectly matching your rule constraint
+      // 🎯 FIX: Savings KPI now accurately reads from your isolated Save Vault bucket!
+      'savingsAllocated': liveSaveBalance, 
+      'liveTotalBalance': liveTotalBalance, 
+      'liveSpendBalance': liveSpendBalance,
+      'liveShareBalance': liveShareBalance,
+      'username': username,
+      'categorySpending': categorySpendingTotals,
       'weeklyData': sortedWeeklyData,
       'streakCount': txs.length,
-      'liveTotalBalance': liveTotalBalance, // Available if you want to display the real wallet frame parameter
     };
   }
 
@@ -153,6 +181,7 @@ Widget build(BuildContext context) {
 
       final weeklyDataMap =
           data['weeklyData'] as Map<String, Map<String, double>>? ?? {};
+      final Map<dynamic, dynamic> categoryMap = data['categorySpending'] ?? {};
 
       final int streak = data['streakCount'] ?? 0;
       final int rate = data['savingsRate'] ?? 0;
@@ -231,40 +260,37 @@ Widget build(BuildContext context) {
                                     final String? currentUid = supabaseService.currentUserId;
                                     if (currentUid == null) return;
 
-                                    // 🛠️ DIRECT CLIENT FETCH: Read wallet details straight from the Supabase relation layer
+                                    final String childUsername = data['username'] ?? 'Your';
+
+                                    // 🛠 Tangible relation queries
                                     final List<dynamic> walletRecords = await supabaseService.client
                                         .from('wallets')
                                         .select('total_balance, save_balance, spend_balance, share_balance')
                                         .eq('profile_id', currentUid);
 
-                                    double currentTotal = 0.00;
+                                    WalletModel activeWallet;
+
                                     if (walletRecords.isNotEmpty) {
                                       final w = walletRecords.first;
-                                      if (w['total_balance'] != null) {
-                                        currentTotal = double.parse(w['total_balance'].toString());
-                                      } else {
-                                        final double s = double.parse((w['save_balance'] ?? 0.0).toString());
-                                        final double sp = double.parse((w['spend_balance'] ?? 0.0).toString());
-                                        final double sh = double.parse((w['share_balance'] ?? 0.0).toString());
-                                        currentTotal = s + sp + sh;
-                                      }
+                                      activeWallet = WalletModel(
+                                        profileId: currentUid,
+                                        totalBalance: (w['total_balance'] ?? 0.0).toDouble(),
+                                        saveBalance: (w['save_balance'] ?? 0.0).toDouble(), // True Database values passed
+                                        spendBalance: (w['spend_balance'] ?? 0.0).toDouble(),
+                                        shareBalance: (w['share_balance'] ?? 0.0).toDouble(),
+                                      );
+                                    } else {
+                                      activeWallet = WalletModel(
+                                        profileId: currentUid,
+                                        totalBalance: 0.0, saveBalance: 0.0, spendBalance: 0.0, shareBalance: 0.0,
+                                      );
                                     }
 
-                                    // 🧮 FORMULA SYNCHRONIZATION: Package variables cleanly matching parent parameters
-                                    final WalletModel activeWallet = WalletModel(
-                                      profileId: currentUid,
-                                      totalBalance: currentTotal,
-                                      saveBalance: currentTotal * 0.70,
-                                      spendBalance: currentTotal * 0.20,
-                                      shareBalance: currentTotal * 0.10,
-                                    );
-
-                                    // 🚀 EXECUTE COMPILATION TASK
                                     if (context.mounted) {
                                       await SummaryService().generateAndDownloadReport(
                                         context, 
                                         activeWallet, 
-                                        'Your', // ✅ FIXED: Passed custom name context string smoothly
+                                        childUsername, 
                                       );
                                     }
                                   } catch (e) {
@@ -417,39 +443,54 @@ Widget build(BuildContext context) {
 
               const SizedBox(height: 24),
 
-              // 🍕 CATEGORY SECTION (SAFE DEFAULTS)
+              // 🍕 CATEGORY SECTION (DYNAMIC COMPONENT GRID FLOW) 🚀
               _buildSectionHeader('🍕 What Did You Buy?'),
               const SizedBox(height: 16),
 
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildCategoryBox(
-                      name: '🍿 Snacks',
-                      balance:
-                          'RM ${(data['snacksSpent'] ?? 0.0).toStringAsFixed(2)}',
-                      highlight: const Color(0xFFFDBA74),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildCategoryBox(
-                      name: '🎮 Games',
-                      balance:
-                          'RM ${(data['entertainmentSpent'] ?? 0.0).toStringAsFixed(2)}',
-                      highlight: const Color(0xFFC084FC),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildCategoryBox(
-                      name: '🟡 Saved',
-                      balance:
-                          'RM ${(data['savingsAllocated'] ?? 0.0).toStringAsFixed(2)}',
-                      highlight: const Color(0xFF86EFAC),
-                    ),
-                  ),
-                ],
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  // Assign theme accents based on deterministic naming rules matching our service dictionary keys
+                  Color getHighlightColor(String key) {
+                    if (key.contains('Snacks')) return const Color(0xFFFDBA74);
+                    if (key.contains('Games')) return const Color(0xFFC084FC);
+                    if (key.contains('Education')) return const Color(0xFF93C5FD);
+                    if (key.contains('Transport')) return const Color(0xFFA5F3FC);
+                    if (key.contains('Gifts')) return const Color(0xFFFBCFE8);
+                    return const Color(0xFFCBD5E1);
+                  }
+
+                  // Deduct horizontal grid spacer constraints dynamically across mobile layouts
+                  final double boxWidth = (constraints.maxWidth - 12) / 2;
+
+                  return Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    alignment: WrapAlignment.start,
+                    children: [
+                      // Render card layouts for items that actually have dynamic balance changes
+                      ...categoryMap.entries.where((entry) => entry.value > 0).map((entry) {
+                        return SizedBox(
+                          width: boxWidth,
+                          child: _buildCategoryBox(
+                            name: entry.key,
+                            balance: 'RM ${entry.value.toStringAsFixed(2)}',
+                            highlight: getHighlightColor(entry.key),
+                          ),
+                        );
+                      }).toList(),
+
+                      // Append global static pocket tracker element seamlessly inside wrap layers
+                      SizedBox(
+                        width: boxWidth,
+                        child: _buildCategoryBox(
+                          name: '🟡 Total Saved Pockets',
+                          balance: 'RM ${(data['savingsAllocated'] ?? 0.0).toStringAsFixed(2)}',
+                          highlight: const Color(0xFF4ADE80),
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
 
               const SizedBox(height: 24),
