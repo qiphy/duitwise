@@ -144,11 +144,38 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
       for (var key in sortedWeekKeys) key: realWeeklyBreakdown[key]!
     };
 
+// 🧮 AI-LEAN BEHAVIORAL SCORING ENGINE: Evaluates saving patterns & pool maintenance
+    int financialLiteracyScore = 70; // Baseline score
+    
+    // Check if the 70% savings rule is mathematically verified or exceeded
+    if (cumulativeEarned > 0) {
+      double expectedSavings = cumulativeEarned * 0.70;
+      if (liveSaveBalance >= expectedSavings) {
+        financialLiteracyScore += 15; // Bonus for protective habit tracking
+      } else if (liveSaveBalance < expectedSavings * 0.5) {
+        financialLiteracyScore -= 15; // Penalty for severe pocket leakage
+      }
+    }
+
+    // Evaluate consistency and transaction velocity (Streak metric)
+    if (txs.length >= 10) {
+      financialLiteracyScore += 10;
+    } else if (txs.length > 3) {
+      financialLiteracyScore += 5;
+    }
+
+    // Safety Gate: Check if they are running precariously low on fluid cash (Spend pool completely wiped)
+    if (liveTotalBalance > 0 && liveSpendBalance == 0) {
+      financialLiteracyScore -= 10; // Wiped spend bucket flags poor budget pacing
+    }
+
+    // Enforce bounds
+    financialLiteracyScore = financialLiteracyScore.clamp(0, 100);
+
     return {
       'totalEarned': cumulativeEarned,
       'totalSpent': cumulativeSpent,
       'savingsRate': derivedSavingsRate,
-      // 🎯 FIX: Savings KPI now accurately reads from your isolated Save Vault bucket!
       'savingsAllocated': liveSaveBalance, 
       'liveTotalBalance': liveTotalBalance, 
       'liveSpendBalance': liveSpendBalance,
@@ -157,6 +184,7 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
       'categorySpending': categorySpendingTotals,
       'weeklyData': sortedWeeklyData,
       'streakCount': txs.length,
+      'financialScore': financialLiteracyScore, // 🔥 INJECTED MATRIX PARAMETER
     };
   }
 
@@ -291,6 +319,7 @@ Widget build(BuildContext context) {
                                         context, 
                                         activeWallet, 
                                         childUsername, 
+                                        data['financialScore'] ?? 70,
                                       );
                                     }
                                   } catch (e) {
@@ -317,16 +346,45 @@ Widget build(BuildContext context) {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        _buildKpiItem(
-                          'Total Earned',
-                          'RM ${(data['totalEarned'] ?? 0.0).toStringAsFixed(2)}',
-                        ),
-                        _buildKpiItem(
-                          'Total Saved',
-                          'RM ${(data['savingsAllocated'] ?? 0.0).toStringAsFixed(2)}',
-                        ),
+                        _buildKpiItem('Total Earned', 'RM ${(data['totalEarned'] ?? 0.0).toStringAsFixed(2)}'),
+                        _buildKpiItem('Total Saved', 'RM ${(data['savingsAllocated'] ?? 0.0).toStringAsFixed(2)}'),
                         _buildKpiItem('Savings Rate', '$rate%'),
                       ],
+                    ),
+
+                    const SizedBox(height: 16),
+                    const Divider(color: Colors.white24, height: 1),
+                    const SizedBox(height: 12),
+
+                    // 🧠 NEW: AI Financial Literacy Badge and Progress Bar
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(Icons.psychology_rounded, color: Colors.amberAccent, size: 18),
+                            SizedBox(width: 6),
+                            Text(
+                              'Financial Literacy Score',
+                              style: TextStyle(color: Color(0xFFE9D5FF), fontSize: 11, fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                        Text(
+                          '${data['financialScore'] ?? 70}/100',
+                          style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: ((data['financialScore'] ?? 70) / 100.0).clamp(0.0, 1.0),
+                        minHeight: 6,
+                        backgroundColor: Colors.white12,
+                        valueColor: const AlwaysStoppedAnimation<Color>(Colors.amberAccent),
+                      ),
                     ),
                   ],
                 ),

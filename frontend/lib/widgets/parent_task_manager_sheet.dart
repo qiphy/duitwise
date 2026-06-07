@@ -116,6 +116,9 @@ class _ParentTaskManagerSheetState extends State<ParentTaskManagerSheet> {
       builder: (context, walletSnapshot) {
         final walletData = walletSnapshot.data ?? [];
         double currentTotal = 0.00;
+        double currentSave = 0.00;
+        double currentSpend = 0.00;
+        double currentShare = 0.00;
         if (walletData.isNotEmpty) {
           if (walletData.first['total_balance'] != null) {
             currentTotal = double.parse(walletData.first['total_balance'].toString());
@@ -195,18 +198,25 @@ class _ParentTaskManagerSheetState extends State<ParentTaskManagerSheet> {
                         onPressed: () async {
                           final WalletModel childWalletContext = WalletModel(
                             profileId: widget.childId,
-                            totalBalance: currentTotal,
-                            saveBalance: currentTotal * 0.70,
-                            spendBalance: currentTotal * 0.20,
-                            shareBalance: currentTotal * 0.10,
+                            totalBalance: currentTotal, // Or parsed from database map values
+                            saveBalance: currentSave,   // Replace with your local variable holding w['save_balance']
+                            spendBalance: currentSpend, // Replace with your local variable holding w['spend_balance']
+                            shareBalance: currentShare, // Replace with your local variable holding w['share_balance']
                           );
 
                           try {
-                            // Signal that a task calculation operation is running internally
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(content: Text('Generating monthly report statement for ${widget.childName}...')),
                             );
-                            await SummaryService().generateAndDownloadReport(context, childWalletContext, widget.childName);
+
+                            // 3. FIX: Pass the 4th positional argument (defaulting to 70 baseline for parents)
+                            await SummaryService().generateAndDownloadReport(
+                              context, 
+                              childWalletContext, 
+                              widget.childName,
+                              70, // 🔥 Added 4th positional parameter to satisfy the constructor signature
+                            );
+                            
                             if (context.mounted) ScaffoldMessenger.of(context).clearSnackBars();
                           } catch (e) {
                             if (context.mounted) {

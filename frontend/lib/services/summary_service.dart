@@ -62,7 +62,8 @@ class SummaryService {
   /// Fully optimized to accept pre-fetched transactional structures from batch operations.
   Future<Uint8List> compileChildReportBytes(
     WalletModel wallet, 
-    String childName, {
+    String childName, 
+    int financialScore, {
     List<dynamic>? preFetchedTransactions,
   }) async {
     final String? profileId = wallet.profileId;
@@ -158,9 +159,6 @@ class SummaryService {
                   ),
                 ],
               ),
-              pw.SizedBox(height: 16),
-              pw.Divider(color: PdfColor.fromHex('#E2E8F0'), thickness: 1),
-              pw.SizedBox(height: 16),
 
               // --- SECTION B: DUKITWISE AI INSIGHT CARD ---
               pw.Container(
@@ -197,6 +195,50 @@ class SummaryService {
                   _buildCleanStatBox('SPEND CASH (20%)', 'RM ${(totalCoins * _spendRatio).toStringAsFixed(2)}', '#2563EB', '#DBEAFE'),
                   _buildCleanStatBox('SHARE POCKET (10%)', 'RM ${(totalCoins * _shareRatio).toStringAsFixed(2)}', '#DB2777', '#FCE7F3'),
                 ],
+              ),
+              pw.SizedBox(height: 12),
+
+              // 🧠 NEW MOVED LOCATION: AI Financial Literacy Row with integrated horizontal rating bar
+              pw.Container(
+                width: double.infinity,
+                padding: const pw.EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: pw.BoxDecoration(
+                  color: PdfColor.fromHex('#FFFBEB'), // Soft warm amber tint
+                  borderRadius: pw.BorderRadius.circular(12),
+                  border: pw.Border.all(color: PdfColor.fromHex('#FEF3C7'), width: 1),
+                ),
+                child: pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Row(
+                      children: [
+                        pw.Text('AI Financial Literacy Score: ', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#B45309'))),
+                        pw.Text('$financialScore / 100', style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#78350F'))),
+                      ],
+                    ),
+                    // Visual indicator bar right in line inside the row container
+                    pw.Container(
+                      width: 120,
+                      height: 6,
+                      decoration: pw.BoxDecoration(
+                        color: PdfColor.fromHex('#E2E8F0'),
+                        borderRadius: pw.BorderRadius.circular(3),
+                      ),
+                      child: pw.Stack(
+                        children: [
+                          pw.Container(
+                            width: 120 * (financialScore / 100.0).clamp(0.0, 1.0),
+                            height: 6,
+                            decoration: pw.BoxDecoration(
+                              color: PdfColor.fromHex('#D97706'), // Matching gold standard
+                              borderRadius: pw.BorderRadius.circular(3),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
               pw.SizedBox(height: 24),
 
@@ -241,9 +283,10 @@ class SummaryService {
   }
 
   /// 📑 SINGLE CHANNEL: Compiles layout and pops open native presentation preview window natively
-  Future<void> generateAndDownloadReport(BuildContext context, WalletModel wallet, String childName) async {
-    try {
-      final Uint8List pdfBytes = await compileChildReportBytes(wallet, childName);
+Future<void> generateAndDownloadReport(BuildContext context, WalletModel wallet, String childName, int financialScore) async {
+  try {
+    // 🎯 Passes the variable directly down into the compiler
+    final Uint8List pdfBytes = await compileChildReportBytes(wallet, childName, financialScore);
       
       await Printing.layoutPdf(
         onLayout: (PdfPageFormat format) async => pdfBytes,
@@ -308,19 +351,34 @@ class SummaryService {
             : (save + spend + share);
       }
 
-      final childWalletContext = WalletModel(
-        profileId: kidId,
-        totalBalance: total,
-        saveBalance: save,
-        spendBalance: spend,
-        shareBalance: share,
-      );
+      int calculatedBatchScore = 70; // Baseline score
+          double totalEarned = 0.0;
+          for (var tx in preFetchedTx) {
+            totalEarned += (tx['amount'] ?? 0.0).toDouble();
+          }
+          
+          if (totalEarned > 0) {
+            if (save >= (totalEarned * 0.70)) calculatedBatchScore += 15;
+            else if (save < (totalEarned * 0.35)) calculatedBatchScore -= 15;
+          }
+          if (preFetchedTx.length >= 10) calculatedBatchScore += 10;
+          if (total > 0 && spend == 0) calculatedBatchScore -= 10;
+          calculatedBatchScore = calculatedBatchScore.clamp(0, 100);
 
-      final Uint8List highFidelityPdfBytes = await compileChildReportBytes(
-        childWalletContext, 
-        kidName,
-        preFetchedTransactions: preFetchedTx, 
-      );
+          final childWalletContext = WalletModel(
+            profileId: kidId,
+            totalBalance: total,
+            saveBalance: save,
+            spendBalance: spend,
+            shareBalance: share,
+          );
+
+          final Uint8List highFidelityPdfBytes = await compileChildReportBytes(
+            childWalletContext, 
+            kidName,
+            calculatedBatchScore, // 🔥 INJECTED 3RD POSITIONAL ARGUMENT CLEARING COMPILER ERROR
+            preFetchedTransactions: preFetchedTx, 
+          );
       
       final String safeFileName = "${kidName.replaceAll(RegExp(r'[^\w\s]+'), '')}_Monthly_Statement.pdf";
 
