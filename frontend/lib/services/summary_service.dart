@@ -16,6 +16,38 @@ class SummaryService {
   static const double _spendRatio = 0.20;
   static const double _shareRatio = 0.10;
 
+  /// 🧮 UNIFIED SCORING ENGINE: Processes gross earnings defensively against varying types
+  static int calculateFinancialScore({
+    required List<dynamic> transactions, 
+    required double saveBalance, 
+    required double totalBalance, 
+    required double spendBalance,
+  }) {
+    int score = 70; 
+    double totalEarnedGross = 0.0;
+
+    for (var tx in transactions) {
+      if (tx == null || tx['amount'] == null) continue;
+      final double amt = double.parse(tx['amount'].toString());
+      if (amt > 0) {
+        totalEarnedGross += amt; 
+      }
+    }
+    
+    if (totalEarnedGross > 0) {
+      if (saveBalance >= (totalEarnedGross * _saveRatio)) {
+        score += 15;
+      } else if (saveBalance < (totalEarnedGross * 0.35)) {
+        score -= 15;
+      }
+    }
+    
+    if (transactions.length >= 10) score += 10;
+    if (totalBalance > 0 && spendBalance == 0) score -= 10;
+    
+    return score.clamp(0, 100);
+  }
+
   /// 🤖 CONNECTIVITY INTERFACE: Dispatches parameters straight to your Supabase Edge pipeline
   Future<String> _fetchAIInsight(WalletModel wallet, Map<String, dynamic>? goalData, double earned, double spent) async {
     try {
@@ -57,13 +89,9 @@ class SummaryService {
   }
 
   /// 🛠️ CORE COMPILER ENGINE: Generates a high-fidelity document object model instance in isolation.
-  /// This can be cleanly consumed by both the single view printer and the batch archive processor!
-/// 🛠️ CORE COMPILER ENGINE: Generates a high-fidelity document object model instance in isolation.
-  /// Fully optimized to accept pre-fetched transactional structures from batch operations.
   Future<Uint8List> compileChildReportBytes(
     WalletModel wallet, 
-    String childName, 
-    int financialScore, {
+    String childName, {
     List<dynamic>? preFetchedTransactions,
   }) async {
     final String? profileId = wallet.profileId;
@@ -78,9 +106,7 @@ class SummaryService {
     String aiInsight = _fallbackInsight;
 
     try {
-      // 1. CONDITIONAL HYDRATION LANE: Differentiates Single vs Batch modes
       if (preFetchedTransactions != null) {
-        // 🚀 BATCH MODE: Reuse pre-fetched transactions directly; fetch missing goal row
         txData = preFetchedTransactions;
         try {
           goalData = await supabaseService.client
@@ -92,7 +118,6 @@ class SummaryService {
           debugPrint('⚠️ summary_service: Error resolving child goal metric context: $e');
         }
       } else {
-        // 📑 SINGLE MODE: Aggregate full data tables concurrently over a 10s network threshold
         final dynamic aggregatedData = await Future.wait<dynamic>([
           supabaseService.client.from('savings_goals').select('goal_name, target_amount, status').eq('profile_id', profileId).maybeSingle(),
           supabaseService.client.from('transactions').select('title, category, amount').eq('profile_id', profileId).order('created_at', ascending: false),
@@ -105,25 +130,30 @@ class SummaryService {
         txData = aggregatedData[1] as List<dynamic>;
       }
 
-      // Calculate total dynamic earned and spent aggregates
       double totalEarned = 0.0;
       double totalSpent = 0.0;
       for (var tx in txData) {
-        final double amt = (tx['amount'] ?? 0.0).toDouble();
+        if (tx == null || tx['amount'] == null) continue;
+        final double amt = double.parse(tx['amount'].toString());
         amt >= 0 ? totalEarned += amt : totalSpent += amt.abs();
       }
 
-      // Fetch DuitWise AI Mentor Insights or fall back cleanly
+      final double totalCoins = wallet.totalBalance ?? 
+          ((wallet.saveBalance ?? 0.0) + (wallet.spendBalance ?? 0.0) + (wallet.shareBalance ?? 0.0));
+
+      final int financialScore = calculateFinancialScore(
+        transactions: txData,
+        saveBalance: wallet.saveBalance ?? 0.0,
+        spendBalance: wallet.spendBalance ?? 0.0,
+        totalBalance: totalCoins,
+      );
+
       try {
         aiInsight = await _fetchAIInsight(wallet, goalData, totalEarned, totalSpent);
       } catch (e) {
         debugPrint('⚠️ Failed to resolve Edge insight engine parameters: $e');
       }
 
-      final double totalCoins = wallet.totalBalance ?? 
-          ((wallet.saveBalance ?? 0.0) + (wallet.spendBalance ?? 0.0) + (wallet.shareBalance ?? 0.0));
-
-      // 2. DOCUMENT CANVAS CONSTRUCTION VIEWPORT
       doc.addPage(
         pw.MultiPage(
           pageFormat: PdfPageFormat.a4,
@@ -150,6 +180,7 @@ class SummaryService {
                       pw.Text('$childName\'s Monthly Statement', style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#0F172A'))),
                       pw.SizedBox(height: 2),
                       pw.Text('Period: $currentMonthStr', style: pw.TextStyle(fontSize: 11, color: PdfColor.fromHex('#64748B'))),
+                      pw.SizedBox(height: 12),
                     ],
                   ),
                   pw.Container(
@@ -198,12 +229,12 @@ class SummaryService {
               ),
               pw.SizedBox(height: 12),
 
-              // 🧠 NEW MOVED LOCATION: AI Financial Literacy Row with integrated horizontal rating bar
+              // AI Financial Literacy Row
               pw.Container(
                 width: double.infinity,
                 padding: const pw.EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: pw.BoxDecoration(
-                  color: PdfColor.fromHex('#FFFBEB'), // Soft warm amber tint
+                  color: PdfColor.fromHex('#FFFBEB'), 
                   borderRadius: pw.BorderRadius.circular(12),
                   border: pw.Border.all(color: PdfColor.fromHex('#FEF3C7'), width: 1),
                 ),
@@ -212,11 +243,10 @@ class SummaryService {
                   children: [
                     pw.Row(
                       children: [
-                        pw.Text('AI Financial Literacy Score: ', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#B45309'))),
+                        pw.Text('Financial Literacy Score: ', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#B45309'))),
                         pw.Text('$financialScore / 100', style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex('#78350F'))),
                       ],
                     ),
-                    // Visual indicator bar right in line inside the row container
                     pw.Container(
                       width: 120,
                       height: 6,
@@ -230,7 +260,7 @@ class SummaryService {
                             width: 120 * (financialScore / 100.0).clamp(0.0, 1.0),
                             height: 6,
                             decoration: pw.BoxDecoration(
-                              color: PdfColor.fromHex('#D97706'), // Matching gold standard
+                              color: PdfColor.fromHex('#D97706'), 
                               borderRadius: pw.BorderRadius.circular(3),
                             ),
                           ),
@@ -282,11 +312,20 @@ class SummaryService {
     return doc.save();
   }
 
-  /// 📑 SINGLE CHANNEL: Compiles layout and pops open native presentation preview window natively
-Future<void> generateAndDownloadReport(BuildContext context, WalletModel wallet, String childName, int financialScore) async {
-  try {
-    // 🎯 Passes the variable directly down into the compiler
-    final Uint8List pdfBytes = await compileChildReportBytes(wallet, childName, financialScore);
+  /// 📑 SINGLE CHANNEL: Compiles layout using the internal context-driven score resolution
+  /// 🔥 FIX: Added the named {List<dynamic>? transactions} configuration parameter back to signature!
+  Future<void> generateAndDownloadReport(
+    BuildContext context, 
+    WalletModel wallet, 
+    String childName, {
+    List<dynamic>? transactions, 
+  }) async {
+    try {
+      final Uint8List pdfBytes = await compileChildReportBytes(
+        wallet, 
+        childName,
+        preFetchedTransactions: transactions,
+      );
       
       await Printing.layoutPdf(
         onLayout: (PdfPageFormat format) async => pdfBytes,
@@ -298,8 +337,6 @@ Future<void> generateAndDownloadReport(BuildContext context, WalletModel wallet,
   }
 
   /// ⚡ PREMIUM CONCURRENT BATCH ENGINE: Resolves full-fidelity styled reports concurrently into a ZIP container.
-/// ⚡ PREMIUM CONCURRENT BATCH ENGINE: Resolves full-fidelity styled reports concurrently into a ZIP container.
-/// ⚡ PREMIUM CONCURRENT BATCH ENGINE: Resolves full-fidelity styled reports concurrently into a ZIP container.
   Future<void> generateAndShareHouseholdZipArchive(List<dynamic> kidsList) async {
     final Archive familyArchive = Archive();
 
@@ -307,19 +344,12 @@ Future<void> generateAndDownloadReport(BuildContext context, WalletModel wallet,
       final String kidName = kid['username'] ?? 'Young Saver';
       final String kidId = kid['id']?.toString() ?? '';
       final dynamic walletMap = kid['wallets'];
-      
-      // 🔬 DIAGNOSTIC LIFELINE: Let's inspect exactly what Supabase returns for transactions
-      debugPrint('📦 DuitWise Batch Processing: $kidName (ID: $kidId)');
-      debugPrint('📦 Raw Linked Transaction Data Type: ${kid['transactions'].runtimeType}');
-      debugPrint('📦 Raw Linked Transaction Payload: ${kid['transactions']}');
 
-      // 🎯 EXTRA-BULLETPROOF EXTRACTION: Handle variations in PostgREST JSON structures
       List<dynamic> preFetchedTx = [];
       if (kid['transactions'] != null) {
         if (kid['transactions'] is List) {
           preFetchedTx = kid['transactions'] as List<dynamic>;
         } else if (kid['transactions'] is Map) {
-          // Fallback case if returned as a nested map container object
           final dynamic embeddedList = kid['transactions']['data'] ?? kid['transactions']['records'];
           if (embeddedList is List) {
             preFetchedTx = embeddedList as List<dynamic>;
@@ -332,7 +362,6 @@ Future<void> generateAndDownloadReport(BuildContext context, WalletModel wallet,
       double spend = 0.00;
       double share = 0.00;
 
-      // Handle both List and Map variants for the nested wallet entity relation
       dynamic targetWalletMap;
       if (walletMap != null) {
         if (walletMap is List && walletMap.isNotEmpty) {
@@ -351,34 +380,19 @@ Future<void> generateAndDownloadReport(BuildContext context, WalletModel wallet,
             : (save + spend + share);
       }
 
-      int calculatedBatchScore = 70; // Baseline score
-          double totalEarned = 0.0;
-          for (var tx in preFetchedTx) {
-            totalEarned += (tx['amount'] ?? 0.0).toDouble();
-          }
-          
-          if (totalEarned > 0) {
-            if (save >= (totalEarned * 0.70)) calculatedBatchScore += 15;
-            else if (save < (totalEarned * 0.35)) calculatedBatchScore -= 15;
-          }
-          if (preFetchedTx.length >= 10) calculatedBatchScore += 10;
-          if (total > 0 && spend == 0) calculatedBatchScore -= 10;
-          calculatedBatchScore = calculatedBatchScore.clamp(0, 100);
+      final childWalletContext = WalletModel(
+        profileId: kidId,
+        totalBalance: total,
+        saveBalance: save,
+        spendBalance: spend,
+        shareBalance: share,
+      );
 
-          final childWalletContext = WalletModel(
-            profileId: kidId,
-            totalBalance: total,
-            saveBalance: save,
-            spendBalance: spend,
-            shareBalance: share,
-          );
-
-          final Uint8List highFidelityPdfBytes = await compileChildReportBytes(
-            childWalletContext, 
-            kidName,
-            calculatedBatchScore, // 🔥 INJECTED 3RD POSITIONAL ARGUMENT CLEARING COMPILER ERROR
-            preFetchedTransactions: preFetchedTx, 
-          );
+      final Uint8List highFidelityPdfBytes = await compileChildReportBytes(
+        childWalletContext, 
+        kidName,
+        preFetchedTransactions: preFetchedTx, 
+      );
       
       final String safeFileName = "${kidName.replaceAll(RegExp(r'[^\w\s]+'), '')}_Monthly_Statement.pdf";
 
@@ -403,8 +417,6 @@ Future<void> generateAndDownloadReport(BuildContext context, WalletModel wallet,
       filename: "Household_Monthly_Reports_${DateTime.now().millisecondsSinceEpoch}.zip",
     );
   }
-
-  // --- PRIVATE LAYOUT COMPOSTING METHODS ---
 
   static pw.Widget _buildCleanStatBox(String label, String value, String hexText, String hexBg) {
     return pw.Container(
@@ -492,7 +504,7 @@ Future<void> generateAndDownloadReport(BuildContext context, WalletModel wallet,
           children: [_buildHeaderCell('Transaction Description Log'), _buildHeaderCell('Category'), _buildHeaderCell('Net Value Impact')],
         ),
         ...txData.map((tx) {
-          final double amt = (tx['amount'] ?? 0.0).toDouble();
+          final double amt = double.parse((tx['amount'] ?? 0.0).toString());
           final String prefix = amt >= 0 ? '+' : '-';
           return pw.TableRow(
             children: [

@@ -107,149 +107,169 @@ class _ParentTaskManagerSheetState extends State<ParentTaskManagerSheet> {
 
   // --- SUB-WIDGETS DIRECT COMPOSITION ---
 
-  Widget _buildHeaderControlPad() {
-    return FutureBuilder<List<dynamic>>(
-      future: supabaseService.client
-          .from('wallets')
-          .select('total_balance, save_balance, spend_balance, share_balance')
-          .eq('profile_id', widget.childId),
-      builder: (context, walletSnapshot) {
-        final walletData = walletSnapshot.data ?? [];
-        double currentTotal = 0.00;
-        double currentSave = 0.00;
-        double currentSpend = 0.00;
-        double currentShare = 0.00;
-        if (walletData.isNotEmpty) {
-          if (walletData.first['total_balance'] != null) {
-            currentTotal = double.parse(walletData.first['total_balance'].toString());
-          } else {
-            final double s = double.parse((walletData.first['save_balance'] ?? 0.0).toString());
-            final double sp = double.parse((walletData.first['spend_balance'] ?? 0.0).toString());
-            final double sh = double.parse((walletData.first['share_balance'] ?? 0.0).toString());
-            currentTotal = s + sp + sh;
-          }
+Widget _buildHeaderControlPad() {
+  return FutureBuilder<List<dynamic>>(
+    future: supabaseService.client
+        .from('wallets')
+        .select('total_balance, save_balance, spend_balance, share_balance')
+        .eq('profile_id', widget.childId),
+    builder: (context, walletSnapshot) {
+      final walletData = walletSnapshot.data ?? [];
+      double currentTotal = 0.00;
+      double currentSave = 0.00;
+      double currentSpend = 0.00;
+      double currentShare = 0.00;
+      
+      if (walletData.isNotEmpty) {
+        final firstWallet = walletData.first;
+        
+        // ✨ FIX 1: Correctly extract and store sub-allocation pocket values
+        currentSave = double.parse((firstWallet['save_balance'] ?? 0.0).toString());
+        currentSpend = double.parse((firstWallet['spend_balance'] ?? 0.0).toString());
+        currentShare = double.parse((firstWallet['share_balance'] ?? 0.0).toString());
+        
+        if (firstWallet['total_balance'] != null) {
+          currentTotal = double.parse(firstWallet['total_balance'].toString());
+        } else {
+          currentTotal = currentSave + currentSpend + currentShare;
         }
+      }
 
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final bool isNarrow = constraints.maxWidth < 600;
-            return Wrap(
-              spacing: 16,
-              runSpacing: 16,
-              alignment: WrapAlignment.spaceBetween,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: isNarrow ? constraints.maxWidth : constraints.maxWidth * 0.45,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Flexible(
-                            child: Text(
-                              _showSettings ? 'Settings: ${widget.childName} ⚙️' : '${widget.childName}\'s Hub 🚀',
-                              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          IconButton(
-                            icon: Icon(
-                              _showSettings ? Icons.close_rounded : Icons.settings_outlined,
-                              color: const Color(0xFF8B5CF6),
-                              size: 22,
-                            ),
-                            onPressed: () => setState(() => _showSettings = !_showSettings),
-                            tooltip: 'Toggle Parental Control Restrictions Settings',
-                            constraints: const BoxConstraints(),
-                            padding: const EdgeInsets.all(4),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Balance: RM ${currentTotal.toStringAsFixed(2)} 🟡',
-                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF8B5CF6)),
-                      ),
-                    ],
-                  ),
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final bool isNarrow = constraints.maxWidth < 600;
+          return Wrap(
+            spacing: 16,
+            runSpacing: 16,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: isNarrow ? constraints.maxWidth : constraints.maxWidth * 0.45,
                 ),
-                Container(
-                  width: isNarrow ? constraints.maxWidth : constraints.maxWidth * 0.50,
-                  alignment: isNarrow ? Alignment.centerLeft : Alignment.centerRight,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF8B5CF6),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          elevation: 0,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            _showSettings ? 'Settings: ${widget.childName} ⚙️' : '${widget.childName}\'s Hub 🚀',
+                            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                        icon: const Icon(Icons.download_rounded, color: Colors.white, size: 16),
-                        label: const Text('Download Monthly Report', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                        onPressed: () async {
-                          final WalletModel childWalletContext = WalletModel(
-                            profileId: widget.childId,
-                            totalBalance: currentTotal, // Or parsed from database map values
-                            saveBalance: currentSave,   // Replace with your local variable holding w['save_balance']
-                            spendBalance: currentSpend, // Replace with your local variable holding w['spend_balance']
-                            shareBalance: currentShare, // Replace with your local variable holding w['share_balance']
+                        const SizedBox(width: 4),
+                        IconButton(
+                          icon: Icon(
+                            _showSettings ? Icons.close_rounded : Icons.settings_outlined,
+                            color: const Color(0xFF8B5CF6),
+                            size: 22,
+                          ),
+                          onPressed: () => setState(() => _showSettings = !_showSettings),
+                          tooltip: 'Toggle Parental Control Restrictions Settings',
+                          constraints: const BoxConstraints(),
+                          padding: const EdgeInsets.all(4),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Balance: RM ${currentTotal.toStringAsFixed(2)} 🟡',
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF8B5CF6)),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                width: isNarrow ? constraints.maxWidth : constraints.maxWidth * 0.50,
+                alignment: isNarrow ? Alignment.centerLeft : Alignment.centerRight,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF8B5CF6),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        elevation: 0,
+                      ),
+                      icon: const Icon(Icons.download_rounded, color: Colors.white, size: 16),
+                      label: const Text('Download Monthly Report', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                      onPressed: () async {
+                        // ✨ FIX 2: Pass fully hydrated wallet parameters down the pipeline
+                        final WalletModel childWalletContext = WalletModel(
+                          profileId: widget.childId,
+                          totalBalance: currentTotal, 
+                          saveBalance: currentSave,   
+                          spendBalance: currentSpend, 
+                          shareBalance: currentShare, 
+                        );
+
+                        try {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Generating monthly report statement for ${widget.childName}...')),
                           );
 
-                          try {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Generating monthly report statement for ${widget.childName}...')),
-                            );
+                          // 🧠 DYNAMIC SYNC: Fetch history ledger to run our unified math calculation
+                          final List<dynamic> liveTxData = await supabaseService.client
+                              .from('transactions')
+                              .select('title, category, amount')
+                              .eq('profile_id', widget.childId)
+                              .order('created_at', ascending: false);
 
-                            // 3. FIX: Pass the 4th positional argument (defaulting to 70 baseline for parents)
-                            await SummaryService().generateAndDownloadReport(
-                              context, 
-                              childWalletContext, 
-                              widget.childName,
-                              70, // 🔥 Added 4th positional parameter to satisfy the constructor signature
+                          // ✨ FIX 3: Calculate the definitive score on demand using the shared scoring rules
+                          final int alignedScore = SummaryService.calculateFinancialScore(
+                            transactions: liveTxData,
+                            saveBalance: currentSave,
+                            spendBalance: currentSpend,
+                            totalBalance: currentTotal,
+                          );
+
+                          // Execute rendering with the correct positional parameters intact
+                          await SummaryService().generateAndDownloadReport(
+                            context, 
+                            childWalletContext, 
+                            widget.childName,
+                          );
+                          
+                          if (context.mounted) ScaffoldMessenger.of(context).clearSnackBars();
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).clearSnackBars();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(backgroundColor: Colors.redAccent, content: Text('Failed to compile document: $e')),
                             );
-                            
-                            if (context.mounted) ScaffoldMessenger.of(context).clearSnackBars();
-                          } catch (e) {
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).clearSnackBars();
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(backgroundColor: Colors.redAccent, content: Text('Failed to compile document: $e')),
-                              );
-                            }
                           }
-                        },
+                        }
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF10B981),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        elevation: 0,
                       ),
-                      const SizedBox(width: 8),
-                      ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF10B981),
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          elevation: 0,
-                        ),
-                        icon: const Icon(Icons.send_rounded, color: Colors.white, size: 16),
-                        label: const Text('Transfer', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                        onPressed: () => Navigator.pop(context, 'transfer'),
-                      ),
-                    ],
-                  ),
+                      icon: const Icon(Icons.send_rounded, color: Colors.white, size: 16),
+                      label: const Text('Transfer', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                      onPressed: () => Navigator.pop(context, 'transfer'),
+                    ),
+                  ],
                 ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+}
 
   Widget _buildSettingsFormView() {
     return Form(
