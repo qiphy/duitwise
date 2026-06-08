@@ -25,15 +25,23 @@ class _OnboardingWelcomeScreenState extends State<OnboardingWelcomeScreen> {
   @override
   void initState() {
     super.initState();
-    // ✅ FIXED: Asset path string corrected to match your exact filename
-    _introController = VideoPlayerController.asset('intro_video.mp4')
+    
+    // 🌐 CHANGED: Swapped .asset for .networkUrl to stream directly from Supabase
+    final videoUri = Uri.parse(
+      'https://tbrefzeytkflqyadayvs.supabase.co/storage/v1/object/public/quest-videos/intro_video.mp4'
+    );
+
+    _introController = VideoPlayerController.networkUrl(videoUri)
       ..initialize().then((_) {
         if (mounted) {
           setState(() => _isVideoInitialized = true);
         }
+      }).catchError((error) {
+        // Handle any network loading/CORS errors gracefully here
+        debugPrint("Video initialization failed: $error");
       });
 
-    // 🔄 ADDED STATE LISTENERS: Redraws the UI automatically when video triggers play/pause state changes
+    // 🔄 STATE LISTENERS: Redraws the UI automatically when video triggers play/pause state changes
     _introController?.addListener(() {
       if (mounted) setState(() {});
     });
@@ -80,12 +88,10 @@ class _OnboardingWelcomeScreenState extends State<OnboardingWelcomeScreen> {
               ),
               const SizedBox(height: 24),
 
-              // 🎞️ APP INTRODUCTION VIDEO LAYER COMPONENT (FIXED: Dynamic aspect-ratio driven framing)
-// 🎞️ APP INTRODUCTION VIDEO LAYER COMPONENT (FIXED: Bounded 40% adaptive screen width scaling)
+              // 🎞️ APP INTRODUCTION VIDEO LAYER COMPONENT
               Center(
                 child: LayoutBuilder(
                   builder: (context, constraints) {
-                    // Automatically uses 40% of available screen width on large desktop screens, scaling wider on mobile
                     double optimizedWidth = constraints.maxWidth > 600 
                         ? constraints.maxWidth * 0.40 
                         : constraints.maxWidth * 0.90;
@@ -103,7 +109,6 @@ class _OnboardingWelcomeScreenState extends State<OnboardingWelcomeScreen> {
                             duration: const Duration(milliseconds: 300),
                             child: _isVideoInitialized
                                 ? AspectRatio(
-                                    // Dynamically locks structural proportions to the file's native aspect ratio
                                     aspectRatio: _introController!.value.aspectRatio,
                                     child: Stack(
                                       alignment: Alignment.center,
@@ -120,7 +125,7 @@ class _OnboardingWelcomeScreenState extends State<OnboardingWelcomeScreen> {
                                             });
                                           },
                                           child: CircleAvatar(
-                                            radius: 24, // Slightly scaled down icon ring for smaller frame hygiene
+                                            radius: 24, 
                                             backgroundColor: Colors.white.withValues(alpha: 0.9),
                                             child: Icon(
                                               _introController!.value.isPlaying 
@@ -135,7 +140,6 @@ class _OnboardingWelcomeScreenState extends State<OnboardingWelcomeScreen> {
                                     ),
                                   )
                                 : SizedBox(
-                                    // Maintains strict scaling proportions during asset boot load transitions
                                     height: optimizedWidth * (9 / 16), 
                                     child: const Center(
                                       child: CircularProgressIndicator(color: Colors.white),
@@ -193,7 +197,7 @@ class _OnboardingWelcomeScreenState extends State<OnboardingWelcomeScreen> {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: bg.withValues(alpha: 0.4), // ✅ FIXED: Modernized opacity allocation
+        color: bg.withValues(alpha: 0.4), 
         borderRadius: BorderRadius.circular(16),
       ),
       child: Row(
