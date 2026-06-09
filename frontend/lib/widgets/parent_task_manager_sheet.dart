@@ -31,6 +31,10 @@ class _ParentTaskManagerSheetState extends State<ParentTaskManagerSheet> {
   double _spendPercentage = 20.0;
   double _sharePercentage = 10.0;
 
+  String _coinRewardMode = 'fixed'; // 'fixed' or 'percentage'
+  double _rewardPercentage = 0.0;   // The percentage chosen (e.g., 10%)
+  double _activeMissionTarget = 0.0; // Cache for the active mission's target_amount
+
   final TextEditingController _xpController = TextEditingController();
   final TextEditingController _coinsController = TextEditingController();
   
@@ -111,6 +115,7 @@ class _ParentTaskManagerSheetState extends State<ParentTaskManagerSheet> {
       return false;
     }
   }
+
 
 @override
   Widget build(BuildContext context) {
@@ -336,8 +341,8 @@ class _ParentTaskManagerSheetState extends State<ParentTaskManagerSheet> {
       },
     );
   }
-
-  Widget _buildSettingsFormView() {
+  
+Widget _buildSettingsFormView() {
     final double totalConfiguredSum = _savePercentage + _spendPercentage + _sharePercentage;
     final bool isSumInvalid = (totalConfiguredSum - 100.0).abs() > 0.01;
 
@@ -528,25 +533,197 @@ class _ParentTaskManagerSheetState extends State<ParentTaskManagerSheet> {
               },
             ),
             const SizedBox(height: 16),
-            TextFormField(
-              controller: _coinsController,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-              decoration: InputDecoration(
-                labelText: 'Allowance Coin Reward',
-                prefixText: 'RM ',
-                prefixIcon: const Icon(Icons.payments_rounded, color: Color(0xFF10B981), size: 20),
-                filled: true,
-                fillColor: const Color(0xFFF9FAFB),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              ),
-              onChanged: (val) async {
-                final parsedCoins = double.tryParse(val.trim());
-                if (parsedCoins != null && parsedCoins >= 0.0) {
-                  _currentVideoCoins = parsedCoins;
-                  await supabaseService.client.from('profiles').update({'video_coin_reward': _currentVideoCoins}).eq('id', widget.childId);
+
+            // 🔗 CORRECTED REAL-TIME LINK USING profile_id REFERENCE
+            StreamBuilder<List<Map<String, dynamic>>>(
+              stream: supabaseService.client
+                  .from('savings_goals')
+                  .stream(primaryKey: ['id'])
+                  .eq('profile_id', widget.childId), // Fixed query reference target! ✅
+              builder: (context, snapshot) {
+                double liveActiveMissionTarget = 0.0;
+                String activeGoalName = '';
+
+                if (snapshot.hasData && snapshot.data!.isNotEmpty) {
+                  try {
+                    // Match against exact properties matching your target filter status
+                    final activeGoal = snapshot.data!.firstWhere(
+                      (element) => element['status'] == 'active',
+                    );
+                    liveActiveMissionTarget = (activeGoal['target_amount'] ?? 0.0).toDouble();
+                    activeGoalName = activeGoal['goal_name'] ?? 'Mission';
+                  } catch (_) {
+                    liveActiveMissionTarget = 0.0;
+                  }
                 }
+
+                _activeMissionTarget = liveActiveMissionTarget;
+                final bool hasActiveMission = liveActiveMissionTarget > 0.0;
+
+                // Auto fallback protection check loop
+                final String currentDisplayMode = (!hasActiveMission && _coinRewardMode == 'percentage') 
+                    ? 'fixed' 
+                    : _coinRewardMode;
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 4.0, vertical: 4.0),
+                      child: Text('Allowance Reward Configuration', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1F2937))),
+                    ),
+                    const SizedBox(height: 8),
+
+                    // 🔄 MODE SELECTOR
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ChoiceChip(
+                            label: const Center(child: Text('Fixed RM Amount', style: TextStyle(fontSize: 12))),
+                            selected: currentDisplayMode == 'fixed',
+                            selectedColor: const Color(0xFFECFDF5),
+                            checkmarkColor: const Color(0xFF10B981),
+                            labelStyle: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: currentDisplayMode == 'fixed' ? const Color(0xFF047857) : const Color(0xFF4B5563)
+                            ),
+                            onSelected: (bool selected) async {
+                              if (selected) {
+                                setState(() {
+                                  _coinRewardMode = 'fixed';
+                                  _coinsController.text = _currentVideoCoins.toStringAsFixed(2);
+                                });
+                                try {
+                                  await supabaseService.client.from('profiles').update({'coin_reward_mode': 'fixed'}).eq('id', widget.childId);
+                                } catch (_) {}
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ChoiceChip(
+                            label: Center(
+                              child: Text(
+                                '% of Active Mission', 
+                                style: TextStyle(
+                                  fontSize: 12, 
+                                  color: hasActiveMission ? null : const Color(0xFF9CA3AF)
+                                )
+                              ),
+                            ),
+                            selected: currentDisplayMode == 'percentage',
+                            selectedColor: const Color(0xFFEFF6FF),
+                            disabledColor: const Color(0xFFF3F4F6),
+                            checkmarkColor: const Color(0xFF2563EB),
+                            labelStyle: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: currentDisplayMode == 'percentage' ? const Color(0xFF1D4ED8) : const Color(0xFF4B5563)
+                            ),
+                            onSelected: hasActiveMission ? (bool selected) async {
+                              if (selected) {
+                                setState(() {
+                                  _coinRewardMode = 'percentage';
+                                  _coinsController.text = _rewardPercentage.toStringAsFixed(0);
+                                });
+                                try {
+                                  await supabaseService.client.from('profiles').update({'coin_reward_mode': 'percentage'}).eq('id', widget.childId);
+                                } catch (_) {}
+                              }
+                            } : null,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (!hasActiveMission) ...[
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 4.0, vertical: 4.0),
+                        child: Text(
+                          '🔒 Percentage mode locked. Kid currently has no active missions.',
+                          style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11, fontStyle: FontStyle.italic),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+
+                    // 🪙 ADAPTIVE INPUT FIELD
+                    TextFormField(
+                      controller: _coinsController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                      decoration: InputDecoration(
+                        labelText: currentDisplayMode == 'percentage' 
+                            ? 'Mission Percentage Multiplier' 
+                            : 'Allowance Coin Reward',
+                        prefixText: currentDisplayMode == 'fixed' ? 'RM ' : null,
+                        suffixText: currentDisplayMode == 'percentage' ? '%' : null,
+                        prefixIcon: Icon(
+                          currentDisplayMode == 'percentage' ? Icons.percent_rounded : Icons.payments_rounded, 
+                          color: currentDisplayMode == 'percentage' ? const Color(0xFF2563EB) : const Color(0xFF10B981), 
+                          size: 20
+                        ),
+                        filled: true,
+                        fillColor: const Color(0xFFF9FAFB),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      ),
+                      onChanged: (val) async {
+                        final parsedValue = double.tryParse(val.trim());
+                        if (parsedValue != null && parsedValue >= 0.0) {
+                          if (currentDisplayMode == 'percentage') {
+                            setState(() {
+                              _rewardPercentage = parsedValue;
+                              _currentVideoCoins = (_rewardPercentage / 100) * liveActiveMissionTarget;
+                            });
+                            
+                            try {
+                              await supabaseService.client.from('profiles').update({
+                                'video_coin_percentage_reward': _rewardPercentage,
+                                'video_coin_reward': _currentVideoCoins
+                              }).eq('id', widget.childId);
+                            } catch (_) {}
+                            
+                          } else {
+                            setState(() {
+                              _currentVideoCoins = parsedValue;
+                            });
+                            try {
+                              await supabaseService.client.from('profiles').update({
+                                'video_coin_reward': _currentVideoCoins
+                              }).eq('id', widget.childId);
+                            } catch (_) {}
+                          }
+                        }
+                      },
+                    ),
+
+                    // 💡 DYNAMIC PREVIEW INDICATOR
+                    if (currentDisplayMode == 'percentage' && hasActiveMission) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Goal ($activeGoalName): RM ${liveActiveMissionTarget.toStringAsFixed(2)}',
+                              style: const TextStyle(fontSize: 11, color: Color(0xFF64748B), fontWeight: FontWeight.w500),
+                            ),
+                            Text(
+                              'Payout: RM ${((_rewardPercentage / 100) * liveActiveMissionTarget).toStringAsFixed(2)}',
+                              style: const TextStyle(fontSize: 12, color: Color(0xFF2563EB), fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                );
               },
             ),
           ],
