@@ -11,15 +11,14 @@ import '../supabase_service.dart';
 import '../models.dart';
 
 class SummaryService {
-  
-  static const double _saveRatio = 0.70;
 
-  /// 🧮 UNIFIED SCORING ENGINE: Processes gross earnings defensively against varying types
+  /// 🧮 UNIFIED SCORING ENGINE: Processes gross earnings defensively against user configurations
   static int calculateFinancialScore({
     required List<dynamic> transactions, 
     required double saveBalance, 
     required double totalBalance, 
     required double spendBalance,
+    double savePercentageRule = 70.0, // 🎯 FIX 1: Accepting parent-configured rules with a 70% fallback default
   }) {
     int score = 70; 
     double totalEarnedGross = 0.0;
@@ -33,9 +32,12 @@ class SummaryService {
     }
     
     if (totalEarnedGross > 0) {
-      if (saveBalance >= (totalEarnedGross * _saveRatio)) {
+      // 🎯 FIX 2: Convert the custom percentage rule (e.g., 50.0) into a fractional ratio (0.50)
+      final double dynamicSaveRatio = savePercentageRule / 100.0;
+
+      if (saveBalance >= (totalEarnedGross * dynamicSaveRatio)) {
         score += 15;
-      } else if (saveBalance < (totalEarnedGross * 0.35)) {
+      } else if (saveBalance < (totalEarnedGross * (dynamicSaveRatio * 0.5))) { // Scaled down drop-off threshold
         score -= 15;
       }
     }
@@ -59,7 +61,6 @@ class SummaryService {
         "Authorization": "Bearer $jwtToken",
       };
 
-      // 🎯 FIX 1: Send the actual live discrete bucket balances instead of estimated multiplied estimations
       final response = await http.post(
         Uri.parse('https://tbrefzeytkflqyadayvs.supabase.co/functions/v1/analyze-ledger'),
         headers: requestHeaders,
@@ -101,11 +102,21 @@ class SummaryService {
     Map<String, dynamic>? goalData;
     List<dynamic> txData = [];
     String aiInsight = _fallbackInsight;
+    double savePercentageRule = 70.0;
 
     try {
       if (preFetchedTransactions != null) {
         txData = preFetchedTransactions;
         try {
+          // 🎯 FIX 3: Fetch the split configuration rules for PDF rendering matrices concurrently
+          final profileSnapshot = await supabaseService.client
+              .from('profiles')
+              .select('username, save_reward_percentage, spend_reward_percentage, share_reward_percentage')
+              .eq('id', profileId)
+              .maybeSingle();
+
+          savePercentageRule = (profileSnapshot?['save_reward_percentage'] as num?)?.toDouble() ?? 70.0;
+          
           goalData = await supabaseService.client
               .from('savings_goals')
               .select('goal_name, target_amount, status')
@@ -118,13 +129,17 @@ class SummaryService {
         final dynamic aggregatedData = await Future.wait<dynamic>([
           supabaseService.client.from('savings_goals').select('goal_name, target_amount, status').eq('profile_id', profileId).maybeSingle(),
           supabaseService.client.from('transactions').select('title, category, amount').eq('profile_id', profileId).order('created_at', ascending: false),
+          supabaseService.client.from('profiles').select('save_reward_percentage').eq('id', profileId).maybeSingle(), // Dynamic configuration row lookup
         ]).timeout(
           const Duration(seconds: 10),
-          onTimeout: () => [null, <dynamic>[]],
+          onTimeout: () => [null, <dynamic>[], null],
         );
 
         goalData = aggregatedData[0];
         txData = aggregatedData[1] as List<dynamic>;
+        if (aggregatedData[2] != null) {
+          savePercentageRule = (aggregatedData[2]['save_reward_percentage'] as num?)?.toDouble() ?? 70.0;
+        }
       }
 
       double totalEarned = 0.0;
@@ -138,11 +153,13 @@ class SummaryService {
       final double totalCoins = wallet.totalBalance ?? 
           ((wallet.saveBalance ?? 0.0) + (wallet.spendBalance ?? 0.0) + (wallet.shareBalance ?? 0.0));
 
+      // 🎯 FIX 4: Distribute custom ratio variables directly to the formula engine
       final int financialScore = calculateFinancialScore(
         transactions: txData,
         saveBalance: wallet.saveBalance ?? 0.0,
         spendBalance: wallet.spendBalance ?? 0.0,
         totalBalance: totalCoins,
+        savePercentageRule: savePercentageRule,
       );
 
       try {
@@ -219,7 +236,6 @@ class SummaryService {
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
-                  // 🎯 FIX 2: Swap the synthetic multiplied total out for the real distinct model attributes directly
                   _buildCleanStatBox('SAVE WALLET', 'RM ${(wallet.saveBalance ?? 0.0).toStringAsFixed(2)}', '#16A34A', '#DCFCE7'),
                   _buildCleanStatBox('SPEND CASH', 'RM ${(wallet.spendBalance ?? 0.0).toStringAsFixed(2)}', '#2563EB', '#DBEAFE'),
                   _buildCleanStatBox('SHARE POCKET', 'RM ${(wallet.shareBalance ?? 0.0).toStringAsFixed(2)}', '#DB2777', '#FCE7F3'),
@@ -414,21 +430,20 @@ class SummaryService {
   }
 
   static pw.Widget _buildCleanStatBox(String label, String value, String hexText, String hexBg) {
-      return pw.Container(
-        padding: const pw.EdgeInsets.all(12),
-        width: 160,
-        decoration: pw.BoxDecoration(color: PdfColor.fromHex(hexBg), borderRadius: pw.BorderRadius.circular(12)),
-        child: pw.Column(
-          // 🎯 FIX: Stripped out the invalid 'pw.SuperClip' check completely
-          crossAxisAlignment: pw.CrossAxisAlignment.start, 
-          children: [
-            pw.Text(label, style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex(hexText), letterSpacing: 0.5)),
-            pw.SizedBox(height: 6),
-            pw.Text(value, style: pw.TextStyle(fontSize: 15, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex(hexText))),
-          ],
-        ),
-      );
-    }
+    return pw.Container(
+      padding: const pw.EdgeInsets.all(12),
+      width: 160,
+      decoration: pw.BoxDecoration(color: PdfColor.fromHex(hexBg), borderRadius: pw.BorderRadius.circular(12)),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start, 
+        children: [
+          pw.Text(label, style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex(hexText), letterSpacing: 0.5)),
+          pw.SizedBox(height: 6),
+          pw.Text(value, style: pw.TextStyle(fontSize: 15, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex(hexText))),
+        ],
+      ),
+    );
+  }
 
   static pw.Widget _buildSavingsGoalWidget(Map<String, dynamic>? goalData) {
     if (goalData == null) {

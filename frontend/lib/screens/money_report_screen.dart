@@ -35,7 +35,7 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
 
   // 🧮 Pure Data Engine: Analyzes data to construct dynamic UI parameters
   Future<Map<String, dynamic>> _fetchRealReportAggregates(String profileId) async {
-    // 1. Concurrently fetch child transactions, live wallet data, AND profile metadata rows 🚀
+    // 1. Concurrently fetch child transactions, live wallet data, AND profile split rules 🚀
     final futures = await Future.wait([
       supabaseService.client
           .from('transactions')
@@ -49,7 +49,7 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
           .maybeSingle(),
       supabaseService.client 
           .from('profiles')
-          .select('username')
+          .select('username, save_reward_percentage, spend_reward_percentage, share_reward_percentage') // 🎯 Added dynamic metrics here
           .eq('id', profileId)
           .maybeSingle(),
     ]);
@@ -63,6 +63,9 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
     final double liveSpendBalance = walletData != null ? (walletData['spend_balance'] ?? 0.00).toDouble() : 0.00;
     final double liveShareBalance = walletData != null ? (walletData['share_balance'] ?? 0.00).toDouble() : 0.00;
     final String username = profileData != null ? (profileData['username'] ?? 'Young Saver') : 'Young Saver';
+
+    // 🎯 FIX 1: Safely fall back to default ratios if database rows don't exist yet
+    final double customSavePct = profileData != null ? (profileData['save_reward_percentage'] as num?)?.toDouble() ?? 70.0 : 70.0;
 
     double cumulativeEarned = 0.0;
     double cumulativeSpent = 0.0;
@@ -106,7 +109,8 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
         cumulativeEarned += amt;
         realWeeklyBreakdown[weekIdentifier]!['earned'] = realWeeklyBreakdown[weekIdentifier]!['earned']! + amt;
         
-        double dynamicallySavedPortion = amt * 0.70;
+        // 🎯 FIX 2: Replaced the static 0.70 multiplier with your parent configured ratio profile
+        double dynamicallySavedPortion = amt * (customSavePct / 100.0);
         realWeeklyBreakdown[weekIdentifier]!['saved'] = realWeeklyBreakdown[weekIdentifier]!['saved']! + dynamicallySavedPortion;
       } else {
         final double absAmt = amt.abs();
@@ -121,8 +125,7 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
       }
     }
 
-    final double calculatedTotalSaved = liveTotalBalance;
-    final int derivedSavingsRate = cumulativeEarned > 0 ? 70 : 0;
+    final int derivedSavingsRate = customSavePct.toInt(); // 🎯 Updated to mirror your custom baseline rate
 
     var sortedWeekKeys = realWeeklyBreakdown.keys.toList()..sort();
     Map<String, Map<String, double>> sortedWeeklyData = {
@@ -149,7 +152,7 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
       'categorySpending': categorySpendingTotals,
       'weeklyData': sortedWeeklyData,
       'streakCount': txs.length,
-      'financialScore': synchronizedScore, // 🔥 Synchronized core engine value mapped here
+      'financialScore': synchronizedScore,
     };
   }
 
@@ -299,13 +302,11 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
                       ),
                       const SizedBox(height: 16),
                       
-                      // 🔄 UPDATED KPI ITEMS LATCH LANE:
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           _buildKpiItem('Total Earned', 'RM ${(data['totalEarned'] ?? 0.0).toStringAsFixed(2)}'),
                           _buildKpiItem('Total Saved', 'RM ${(data['savingsAllocated'] ?? 0.0).toStringAsFixed(2)}'),
-                          // 🪙 CHANGED: Swapped out Savings Rate for Spendable Amount metric row tracking
                           _buildKpiItem('Spendable Amount', 'RM ${(data['liveSpendBalance'] ?? 0.00).toStringAsFixed(2)}'),
                         ],
                       ),
@@ -356,7 +357,7 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
                   const Color(0xFF15803D),
                 ),
                 _buildAchievementRow(
-                  '✅  Allocated funds smartly into your savings pockets', // ✨ Streamlined text copy
+                  '✅  Allocated funds smartly into your savings pockets',
                   const Color(0xFFDCFCE7),
                   const Color(0xFF15803D),
                 ),
@@ -474,7 +475,7 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
               const SizedBox(height: 12),
               _buildTipCard(
                 title: 'Great Savings Habit!',
-                body: 'You successfully mapped $rate% of your income into savings.',
+                body: 'You successfully mapped $rate% of your income into savings.', // 🎯 Mirroring dynamic rates
                 bg: const Color(0xFFF5F3FF),
                 primary: const Color(0xFF6D28D9),
               ),

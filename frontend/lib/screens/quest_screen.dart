@@ -223,7 +223,7 @@ class _InteractiveQuestWidgetState extends State<InteractiveQuestWidget> {
     }
   }
 
-  Future<void> _processQuestSelection(int chosenOptionIndex) async {
+Future<void> _processQuestSelection(int chosenOptionIndex) async {
     final activeQuizData = eduVideosList[_selectedVideoIndex];
     final String? profileId = supabaseService.currentUserId;
     if (profileId == null) return;
@@ -334,21 +334,28 @@ class _InteractiveQuestWidgetState extends State<InteractiveQuestWidget> {
       );
     }
 
-    // 2. 💾 SUPABASE REWARD INTEGRATION: Commits parent settings to data ledgerr
+    // 2. 💾 SUPABASE REWARD INTEGRATION: Commits parent settings to data ledger
     if (isCorrect) {
       try {
-        // 📊 HARDCODED ALLOCATION CONFIG: 70% Save / 20% Spend / 10% Share
-        const double savePercentage = 0.70;
-        const double spendPercentage = 0.20;
-        const double sharePercentage = 0.10;
+        // 🎯 FIX 1: Retrieve this kid's distinct parent-configured reward percentages
+        final profileSnapshot = await supabaseService.client
+            .from('profiles')
+            .select('save_reward_percentage, spend_reward_percentage, share_reward_percentage')
+            .eq('id', profileId)
+            .maybeSingle();
 
-        // Calculate the breakdown amounts cleanly
-        final double saveShare = _calibratedCoinAmount * savePercentage;
-        final double spendShare = _calibratedCoinAmount * spendPercentage;
-        final double shareShare = _calibratedCoinAmount * sharePercentage;
+        // Safe fallback constants if records are unassigned or empty
+        final double savePct = (profileSnapshot?['save_reward_percentage'] as num?)?.toDouble() ?? 70.0;
+        final double spendPct = (profileSnapshot?['spend_reward_percentage'] as num?)?.toDouble() ?? 20.0;
+        final double sharePct = (profileSnapshot?['share_reward_percentage'] as num?)?.toDouble() ?? 10.0;
+
+        // 🎯 FIX 2: Calculate the breakdown shares using dynamic rules instead of hardcoded numbers
+        final double saveShare = _calibratedCoinAmount * (savePct / 100.0);
+        final double spendShare = _calibratedCoinAmount * (spendPct / 100.0);
+        final double shareShare = _calibratedCoinAmount * (sharePct / 100.0);
 
         await Future.wait([
-          // A. Fire the all-in-one consolidated wallet balance updater
+          // A. Fire the all-in-one consolidated wallet balance updater with dynamic deltas
           supabaseService.client.rpc('increment_pocket_balances_fixed', params: {
             'target_user_id': profileId,
             'total_reward': _calibratedCoinAmount,

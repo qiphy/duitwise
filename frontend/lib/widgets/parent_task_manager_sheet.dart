@@ -27,8 +27,17 @@ class _ParentTaskManagerSheetState extends State<ParentTaskManagerSheet> {
   int _currentVideoXp = 100;
   double _currentVideoCoins = 10.00;
 
+  double _savePercentage = 70.0;
+  double _spendPercentage = 20.0;
+  double _sharePercentage = 10.0;
+
   final TextEditingController _xpController = TextEditingController();
   final TextEditingController _coinsController = TextEditingController();
+  
+  final TextEditingController _savePercentController = TextEditingController();
+  final TextEditingController _spendPercentController = TextEditingController();
+  final TextEditingController _sharePercentController = TextEditingController();
+  
   final GlobalKey<FormState> _settingsFormKey = GlobalKey<FormState>();
 
   @override
@@ -41,6 +50,9 @@ class _ParentTaskManagerSheetState extends State<ParentTaskManagerSheet> {
   void dispose() {
     _xpController.dispose();
     _coinsController.dispose();
+    _savePercentController.dispose();
+    _spendPercentController.dispose();
+    _sharePercentController.dispose();
     super.dispose();
   }
 
@@ -48,7 +60,7 @@ class _ParentTaskManagerSheetState extends State<ParentTaskManagerSheet> {
     try {
       final snapshot = await supabaseService.client
           .from('profiles')
-          .select('is_frozen, parental_content_restriction, video_xp_reward, video_coin_reward')
+          .select('is_frozen, parental_content_restriction, video_xp_reward, video_coin_reward, save_reward_percentage, spend_reward_percentage, share_reward_percentage')
           .eq('id', widget.childId)
           .maybeSingle();
 
@@ -59,8 +71,17 @@ class _ParentTaskManagerSheetState extends State<ParentTaskManagerSheet> {
           _currentVideoXp = (snapshot['video_xp_reward'] as num?)?.toInt() ?? 100;
           _currentVideoCoins = (snapshot['video_coin_reward'] as num?)?.toDouble() ?? 10.00;
 
+          _savePercentage = (snapshot['save_reward_percentage'] as num?)?.toDouble() ?? 70.0;
+          _spendPercentage = (snapshot['spend_reward_percentage'] as num?)?.toDouble() ?? 20.0;
+          _sharePercentage = (snapshot['share_reward_percentage'] as num?)?.toDouble() ?? 10.0;
+
           _xpController.text = _currentVideoXp.toString();
           _coinsController.text = _currentVideoCoins.toStringAsFixed(2);
+          
+          _savePercentController.text = _savePercentage.toStringAsFixed(0);
+          _spendPercentController.text = _spendPercentage.toStringAsFixed(0);
+          _sharePercentController.text = _sharePercentage.toStringAsFixed(0);
+          
           _isLoadingConfig = false;
         });
       }
@@ -69,295 +90,467 @@ class _ParentTaskManagerSheetState extends State<ParentTaskManagerSheet> {
     }
   }
 
-  @override
+  // 🎯 BATCH COMMIT ENTRIES: Validates matrix constraints before updating Supabase records
+  Future<bool> _savePercentageConfigurationUpstream() async {
+    final double totalConfiguredSum = _savePercentage + _spendPercentage + _sharePercentage;
+    final bool isSumInvalid = (totalConfiguredSum - 100.0).abs() > 0.01;
+
+    if (isSumInvalid) {
+      return false; // Blocks invalid ratio matrix payloads from corrupting rows
+    }
+
+    try {
+      await supabaseService.client.from('profiles').update({
+        'save_reward_percentage': _savePercentage,
+        'spend_reward_percentage': _spendPercentage,
+        'share_reward_percentage': _sharePercentage,
+      }).eq('id', widget.childId);
+      return true;
+    } catch (e) {
+      debugPrint('Error syncing matrix configuration upstream: $e');
+      return false;
+    }
+  }
+
+@override
   Widget build(BuildContext context) {
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.85,
-      padding: const EdgeInsets.only(top: 12, left: 24, right: 24, bottom: 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Container(
-              width: 40,
-              height: 5,
-              margin: const EdgeInsets.only(bottom: 20),
-              decoration: BoxDecoration(
-                color: const Color(0xFFCBD5E1),
-                borderRadius: BorderRadius.circular(10),
+    return PopScope(
+      canPop: true, // Allows the sheet to close naturally...
+      onPopInvokedWithResult: (didPop, result) async {
+        // ...but executes this block right as it's closing!
+        if (_showSettings && !_isLoadingConfig) {
+          debugPrint('🎯 Modal background barrier dismissal detected. Initiating auto-save engine...');
+          
+          // Fire the batch save routine right as the user clicks outside the card
+          final bool saved = await _savePercentageConfigurationUpstream();
+          if (!saved && context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('⚠️ Ratios not saved! Matrix split must total exactly 100%.'),
+                backgroundColor: Colors.redAccent,
+              ),
+            );
+          }
+        }
+      },
+      child: Container(
+        height: MediaQuery.of(context).size.height * 0.85,
+        padding: const EdgeInsets.only(top: 12, left: 24, right: 24, bottom: 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 5,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFCBD5E1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
               ),
             ),
-          ),
-          _buildHeaderControlPad(),
-          const SizedBox(height: 20),
-          Expanded(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 250),
-              child: (_showSettings && !_isLoadingConfig)
-                  ? _buildSettingsFormView()
-                  : _buildFeedsDashboardView(),
+            _buildHeaderControlPad(),
+            const SizedBox(height: 20),
+            Expanded(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 250),
+                child: (_showSettings && !_isLoadingConfig)
+                    ? _buildSettingsFormView()
+                    : _buildFeedsDashboardView(),
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
-          _buildBottomActionRow(),
-        ],
+            const SizedBox(height: 16),
+            _buildBottomActionRow(),
+          ],
+        ),
       ),
     );
   }
 
   // --- SUB-WIDGETS DIRECT COMPOSITION ---
 
-Widget _buildHeaderControlPad() {
-  return FutureBuilder<List<dynamic>>(
-    future: supabaseService.client
-        .from('wallets')
-        .select('total_balance, save_balance, spend_balance, share_balance')
-        .eq('profile_id', widget.childId),
-    builder: (context, walletSnapshot) {
-      final walletData = walletSnapshot.data ?? [];
-      double currentTotal = 0.00;
-      double currentSave = 0.00;
-      double currentSpend = 0.00;
-      double currentShare = 0.00;
-      
-      if (walletData.isNotEmpty) {
-        final firstWallet = walletData.first;
+  Widget _buildHeaderControlPad() {
+    return FutureBuilder<List<dynamic>>(
+      future: supabaseService.client
+          .from('wallets')
+          .select('total_balance, save_balance, spend_balance, share_balance')
+          .eq('profile_id', widget.childId),
+      builder: (context, walletSnapshot) {
+        final walletData = walletSnapshot.data ?? [];
+        double currentTotal = 0.00;
+        double currentSave = 0.00;
+        double currentSpend = 0.00;
+        double currentShare = 0.00;
         
-        // ✨ FIX 1: Correctly extract and store sub-allocation pocket values
-        currentSave = double.parse((firstWallet['save_balance'] ?? 0.0).toString());
-        currentSpend = double.parse((firstWallet['spend_balance'] ?? 0.0).toString());
-        currentShare = double.parse((firstWallet['share_balance'] ?? 0.0).toString());
-        
-        if (firstWallet['total_balance'] != null) {
-          currentTotal = double.parse(firstWallet['total_balance'].toString());
-        } else {
-          currentTotal = currentSave + currentSpend + currentShare;
+        if (walletData.isNotEmpty) {
+          final firstWallet = walletData.first;
+          
+          currentSave = double.parse((firstWallet['save_balance'] ?? 0.0).toString());
+          currentSpend = double.parse((firstWallet['spend_balance'] ?? 0.0).toString());
+          currentShare = double.parse((firstWallet['share_balance'] ?? 0.0).toString());
+          
+          if (firstWallet['total_balance'] != null) {
+            currentTotal = double.parse(firstWallet['total_balance'].toString());
+          } else {
+            currentTotal = currentSave + currentSpend + currentShare;
+          }
         }
-      }
 
-      return LayoutBuilder(
-        builder: (context, constraints) {
-          final bool isNarrow = constraints.maxWidth < 600;
-          return Wrap(
-            spacing: 16,
-            runSpacing: 16,
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: isNarrow ? constraints.maxWidth : constraints.maxWidth * 0.45,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Flexible(
-                          child: Text(
-                            _showSettings ? 'Settings: ${widget.childName} ⚙️' : '${widget.childName}\'s Hub 🚀',
-                            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final bool isNarrow = constraints.maxWidth < 600;
+            return Wrap(
+              spacing: 16,
+              runSpacing: 16,
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: isNarrow ? constraints.maxWidth : constraints.maxWidth * 0.45,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              _showSettings ? 'Settings: ${widget.childName} ⚙️' : '${widget.childName}\'s Hub 🚀',
+                              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 4),
-                        IconButton(
-                          icon: Icon(
-                            _showSettings ? Icons.close_rounded : Icons.settings_outlined,
-                            color: const Color(0xFF8B5CF6),
-                            size: 22,
+                          const SizedBox(width: 4),
+                          IconButton(
+                            icon: Icon(
+                              _showSettings ? Icons.close_rounded : Icons.settings_outlined,
+                              color: const Color(0xFF8B5CF6),
+                              size: 22,
+                            ),
+                            onPressed: () async {
+                              if (_showSettings) {
+                                // 🎯 USER LEAVING SETTINGS VIEW: Fire a safe database batch save operation
+                                final bool saved = await _savePercentageConfigurationUpstream();
+                                if (!saved && mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('⚠️ Ratios not saved! Matrix split must total exactly 100%.'),
+                                      backgroundColor: Colors.redAccent,
+                                    ),
+                                  );
+                                }
+                              }
+                              setState(() => _showSettings = !_showSettings);
+                            },
+                            tooltip: 'Toggle Parental Control Restrictions Settings',
+                            constraints: const BoxConstraints(),
+                            padding: const EdgeInsets.all(4),
                           ),
-                          onPressed: () => setState(() => _showSettings = !_showSettings),
-                          tooltip: 'Toggle Parental Control Restrictions Settings',
-                          constraints: const BoxConstraints(),
-                          padding: const EdgeInsets.all(4),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Balance: RM ${currentTotal.toStringAsFixed(2)} 🟡',
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF8B5CF6)),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                width: isNarrow ? constraints.maxWidth : constraints.maxWidth * 0.50,
-                alignment: isNarrow ? Alignment.centerLeft : Alignment.centerRight,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF8B5CF6),
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        elevation: 0,
+                        ],
                       ),
-                      icon: const Icon(Icons.download_rounded, color: Colors.white, size: 16),
-                      label: const Text('Download Monthly Report', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                      onPressed: () async {
-                        // ✨ FIX 2: Pass fully hydrated wallet parameters down the pipeline
-                        final WalletModel childWalletContext = WalletModel(
-                          profileId: widget.childId,
-                          totalBalance: currentTotal, 
-                          saveBalance: currentSave,   
-                          spendBalance: currentSpend, 
-                          shareBalance: currentShare, 
-                        );
-
-                        try {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Generating monthly report statement for ${widget.childName}...')),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Balance: RM ${currentTotal.toStringAsFixed(2)} 🟡',
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF8B5CF6)),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  width: isNarrow ? constraints.maxWidth : constraints.maxWidth * 0.50,
+                  alignment: isNarrow ? Alignment.centerLeft : Alignment.centerRight,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF8B5CF6),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          elevation: 0,
+                        ),
+                        icon: const Icon(Icons.download_rounded, color: Colors.white, size: 16),
+                        label: const Text('Download Monthly Report', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                        onPressed: () async {
+                          final WalletModel childWalletContext = WalletModel(
+                            profileId: widget.childId,
+                            totalBalance: currentTotal, 
+                            saveBalance: currentSave,   
+                            spendBalance: currentSpend, 
+                            shareBalance: currentShare, 
                           );
 
-                          // 🧠 DYNAMIC SYNC: Fetch history ledger to run our unified math calculation
-                          final List<dynamic> liveTxData = await supabaseService.client
-                              .from('transactions')
-                              .select('title, category, amount')
-                              .eq('profile_id', widget.childId)
-                              .order('created_at', ascending: false);
-
-                          // ✨ FIX 3: Calculate the definitive score on demand using the shared scoring rules
-                          final int alignedScore = SummaryService.calculateFinancialScore(
-                            transactions: liveTxData,
-                            saveBalance: currentSave,
-                            spendBalance: currentSpend,
-                            totalBalance: currentTotal,
-                          );
-
-                          // Execute rendering with the correct positional parameters intact
-                          await SummaryService().generateAndDownloadReport(
-                            context, 
-                            childWalletContext, 
-                            widget.childName,
-                          );
-                          
-                          if (context.mounted) ScaffoldMessenger.of(context).clearSnackBars();
-                        } catch (e) {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).clearSnackBars();
+                          try {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(backgroundColor: Colors.redAccent, content: Text('Failed to compile document: $e')),
+                              SnackBar(content: Text('Generating monthly report statement for ${widget.childName}...')),
                             );
+
+                            final List<dynamic> liveTxData = await supabaseService.client
+                                .from('transactions')
+                                .select('title, category, amount')
+                                .eq('profile_id', widget.childId)
+                                .order('created_at', ascending: false);
+
+                            await SummaryService().generateAndDownloadReport(
+                              context, 
+                              childWalletContext, 
+                              widget.childName,
+                              transactions: liveTxData,
+                            );
+                            
+                            if (context.mounted) ScaffoldMessenger.of(context).clearSnackBars();
+                          } catch (e) {
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).clearSnackBars();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(backgroundColor: Colors.redAccent, content: Text('Failed to compile document: $e')),
+                              );
+                            }
                           }
-                        }
-                      },
-                    ),
-                    const SizedBox(width: 8),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF10B981),
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        elevation: 0,
+                        },
                       ),
-                      icon: const Icon(Icons.send_rounded, color: Colors.white, size: 16),
-                      label: const Text('Transfer', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                      onPressed: () => Navigator.pop(context, 'transfer'),
+                      const SizedBox(width: 8),
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF10B981),
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          elevation: 0,
+                        ),
+                        icon: const Icon(Icons.send_rounded, color: Colors.white, size: 16),
+                        label: const Text('Transfer', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                        onPressed: () => Navigator.pop(context, 'transfer'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildSettingsFormView() {
+    final double totalConfiguredSum = _savePercentage + _spendPercentage + _sharePercentage;
+    final bool isSumInvalid = (totalConfiguredSum - 100.0).abs() > 0.01;
+
+    return Form(
+      key: _settingsFormKey,
+      child: Focus(
+        // 🎯 INTERCEPT FOCUS CHANGE: Syncs with database automatically when tapping outside input fields
+        onFocusChange: (hasFocus) {
+          if (!hasFocus) {
+            _savePercentageConfigurationUpstream();
+          }
+        },
+        child: ListView(
+          key: const ValueKey('parent_settings_view'),
+          physics: const BouncingScrollPhysics(),
+          children: [
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
+              child: Text('Safety Guardrails 🔐', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1F2937))),
+            ),
+            const SizedBox(height: 4),
+            CheckboxListTile(
+              title: const Text('Freeze Wallet', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF374151))),
+              subtitle: const Text('Instantly blocks outbound merchant payments and dynamic fun-budget disbursements.', style: TextStyle(fontSize: 11)),
+              value: _isAccountFrozen,
+              activeColor: const Color(0xFF8B5CF6),
+              controlAffinity: ListTileControlAffinity.leading,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+              onChanged: (val) async {
+                setState(() => _isAccountFrozen = val ?? false);
+                await supabaseService.client.from('profiles').update({'is_frozen': _isAccountFrozen}).eq('id', widget.childId);
+              },
+            ),
+            const Divider(color: Color(0xFFF1F5F9)),
+            CheckboxListTile(
+              title: const Text('Restrict Feed Content', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF374151))),
+              subtitle: const Text('Simplifies application layout parameters; hides experimental transaction models.', style: TextStyle(fontSize: 11)),
+              value: _restrictVisibility,
+              activeColor: const Color(0xFF8B5CF6),
+              controlAffinity: ListTileControlAffinity.leading,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+              onChanged: (val) async {
+                setState(() => _restrictVisibility = val ?? false);
+                await supabaseService.client.from('profiles').update({'parental_content_restriction': _restrictVisibility}).eq('id', widget.childId);
+              },
+            ),
+            const Divider(color: Color(0xFFF1F5F9)),
+            
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
+                  child: Text('Mission Reward Balance Allocation 🪙', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1F2937))),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: isSumInvalid ? const Color(0xFFFEF2F2) : const Color(0xFFECFDF5),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    'Total: ${totalConfiguredSum.toStringAsFixed(0)}%',
+                    style: TextStyle(
+                      fontSize: 12, 
+                      fontWeight: FontWeight.bold, 
+                      color: isSumInvalid ? const Color(0xFFEF4444) : const Color(0xFF10B981)
                     ),
-                  ],
+                  ),
+                ),
+              ],
+            ),
+            if (isSumInvalid) ...[
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 4.0),
+                child: Text(
+                  '⚠️ Attention: The pocket configurations must add up to exactly 100%.',
+                  style: TextStyle(color: Color(0xFFEF4444), fontSize: 11, fontWeight: FontWeight.w500),
                 ),
               ),
             ],
-          );
-        },
-      );
-    },
-  );
-}
-
-  Widget _buildSettingsFormView() {
-    return Form(
-      key: _settingsFormKey,
-      child: ListView(
-        key: const ValueKey('parent_settings_view'),
-        physics: const BouncingScrollPhysics(),
-        children: [
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
-            child: Text('Safety Guardrails 🔐', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1F2937))),
-          ),
-          const SizedBox(height: 4),
-          CheckboxListTile(
-            title: const Text('Freeze Wallet', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF374151))),
-            subtitle: const Text('Instantly blocks outbound merchant payments and dynamic fun-budget disbursements.', style: TextStyle(fontSize: 11)),
-            value: _isAccountFrozen,
-            activeColor: const Color(0xFF8B5CF6),
-            controlAffinity: ListTileControlAffinity.leading,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-            onChanged: (val) async {
-              setState(() => _isAccountFrozen = val ?? false);
-              await supabaseService.client.from('profiles').update({'is_frozen': _isAccountFrozen}).eq('id', widget.childId);
-            },
-          ),
-          const Divider(color: Color(0xFFF1F5F9)),
-          CheckboxListTile(
-            title: const Text('Restrict Feed Content', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF374151))),
-            subtitle: const Text('Simplifies application layout parameters; hides experimental transaction models.', style: TextStyle(fontSize: 11)),
-            value: _restrictVisibility,
-            activeColor: const Color(0xFF8B5CF6),
-            controlAffinity: ListTileControlAffinity.leading,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-            onChanged: (val) async {
-              setState(() => _restrictVisibility = val ?? false);
-              await supabaseService.client.from('profiles').update({'parental_content_restriction': _restrictVisibility}).eq('id', widget.childId);
-            },
-          ),
-          const Divider(color: Color(0xFFF1F5F9)),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
-            child: Text('Quest Incentive Calibration 🎞️', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1F2937))),
-          ),
-          const SizedBox(height: 8),
-          TextFormField(
-            controller: _xpController,
-            keyboardType: TextInputType.number,
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-            decoration: InputDecoration(
-              labelText: 'Video Quest XP Payout',
-              suffixText: 'XP',
-              prefixIcon: const Icon(Icons.bolt_rounded, color: Color(0xFF8B5CF6), size: 20),
-              filled: true,
-              fillColor: const Color(0xFFF9FAFB),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            const SizedBox(height: 12),
+            
+            Row(
+              children: [
+                // Save Field
+                Expanded(
+                  child: TextFormField(
+                    controller: _savePercentController,
+                    keyboardType: TextInputType.number,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF16A34A)),
+                    decoration: InputDecoration(
+                      labelText: 'Save',
+                      suffixText: '%',
+                      floatingLabelAlignment: FloatingLabelAlignment.center,
+                      filled: true,
+                      fillColor: const Color(0xFFF9FAFB),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    onChanged: (val) {
+                      final parsed = double.tryParse(val.trim());
+                      if (parsed != null && parsed >= 0 && parsed <= 100) {
+                        setState(() => _savePercentage = parsed);
+                      }
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // Spend Field
+                Expanded(
+                  child: TextFormField(
+                    controller: _spendPercentController,
+                    keyboardType: TextInputType.number,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF2563EB)),
+                    decoration: InputDecoration(
+                      labelText: 'Spend',
+                      suffixText: '%',
+                      floatingLabelAlignment: FloatingLabelAlignment.center,
+                      filled: true,
+                      fillColor: const Color(0xFFF9FAFB),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    onChanged: (val) {
+                      final parsed = double.tryParse(val.trim());
+                      if (parsed != null && parsed >= 0 && parsed <= 100) {
+                        setState(() => _spendPercentage = parsed);
+                      }
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // Share Field
+                Expanded(
+                  child: TextFormField(
+                    controller: _sharePercentController,
+                    keyboardType: TextInputType.number,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFFDB2777)),
+                    decoration: InputDecoration(
+                      labelText: 'Share',
+                      suffixText: '%',
+                      floatingLabelAlignment: FloatingLabelAlignment.center,
+                      filled: true,
+                      fillColor: const Color(0xFFF9FAFB),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    onChanged: (val) {
+                      final parsed = double.tryParse(val.trim());
+                      if (parsed != null && parsed >= 0 && parsed <= 100) {
+                        setState(() => _sharePercentage = parsed);
+                      }
+                    },
+                  ),
+                ),
+              ],
             ),
-            onChanged: (val) async {
-              final parsedXp = int.tryParse(val.trim());
-              if (parsedXp != null && parsedXp >= 0) {
-                _currentVideoXp = parsedXp;
-                await supabaseService.client.from('profiles').update({'video_xp_reward': _currentVideoXp}).eq('id', widget.childId);
-              }
-            },
-          ),
-          const SizedBox(height: 16),
-          TextFormField(
-            controller: _coinsController,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-            decoration: InputDecoration(
-              labelText: 'Allowance Coin Reward',
-              prefixText: 'RM ',
-              prefixIcon: const Icon(Icons.payments_rounded, color: Color(0xFF10B981), size: 20),
-              filled: true,
-              fillColor: const Color(0xFFF9FAFB),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            
+            const Divider(height: 32, color: Color(0xFFF1F5F9)),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 4.0, vertical: 4.0),
+              child: Text('Quest Incentive Calibration 🎞️', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1F2937))),
             ),
-            onChanged: (val) async {
-              final parsedCoins = double.tryParse(val.trim());
-              if (parsedCoins != null && parsedCoins >= 0.0) {
-                _currentVideoCoins = parsedCoins;
-                await supabaseService.client.from('profiles').update({'video_coin_reward': _currentVideoCoins}).eq('id', widget.childId);
-              }
-            },
-          ),
-        ],
+            const SizedBox(height: 8),
+            TextFormField(
+              controller: _xpController,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              decoration: InputDecoration(
+                labelText: 'Video Quest XP Payout',
+                suffixText: 'XP',
+                prefixIcon: const Icon(Icons.bolt_rounded, color: Color(0xFF8B5CF6), size: 20),
+                filled: true,
+                fillColor: const Color(0xFFF9FAFB),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              ),
+              onChanged: (val) async {
+                final parsedXp = int.tryParse(val.trim());
+                if (parsedXp != null && parsedXp >= 0) {
+                  _currentVideoXp = parsedXp;
+                  await supabaseService.client.from('profiles').update({'video_xp_reward': _currentVideoXp}).eq('id', widget.childId);
+                }
+              },
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _coinsController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              decoration: InputDecoration(
+                labelText: 'Allowance Coin Reward',
+                prefixText: 'RM ',
+                prefixIcon: const Icon(Icons.payments_rounded, color: Color(0xFF10B981), size: 20),
+                filled: true,
+                fillColor: const Color(0xFFF9FAFB),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              ),
+              onChanged: (val) async {
+                final parsedCoins = double.tryParse(val.trim());
+                if (parsedCoins != null && parsedCoins >= 0.0) {
+                  _currentVideoCoins = parsedCoins;
+                  await supabaseService.client.from('profiles').update({'video_coin_reward': _currentVideoCoins}).eq('id', widget.childId);
+                }
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -418,16 +611,15 @@ Widget _buildHeaderControlPad() {
     );
   }
 
-Widget _buildTasksTabFeed() {
-  return FutureBuilder<List<dynamic>>(
-        // 🎯 FIX: Changed from a static string to a dynamic childId key to flush the cache
-        key: ValueKey('tasks_tab_stream_${widget.childId}'),
-        future: supabaseService.client
-            .from('tasks')
-            .select('id, title, description, reward_amount, status, proof_url, recurring_interval')
-            .eq('profile_id', widget.childId)
-            .order('id', ascending: false),
-        builder: (context, taskSnapshot) {
+  Widget _buildTasksTabFeed() {
+    return FutureBuilder<List<dynamic>>(
+      key: ValueKey('tasks_tab_stream_${widget.childId}'),
+      future: supabaseService.client
+          .from('tasks')
+          .select('id, title, description, reward_amount, status, proof_url, recurring_interval')
+          .eq('profile_id', widget.childId)
+          .order('id', ascending: false),
+      builder: (context, taskSnapshot) {
         if (taskSnapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator(color: Color(0xFF8B5CF6)));
         }
@@ -470,7 +662,6 @@ Widget _buildTasksTabFeed() {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // Title row bundled alongside dynamic interval visual layout tags
                             Wrap(
                               crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
@@ -498,7 +689,6 @@ Widget _buildTasksTabFeed() {
                                 ],
                               ],
                             ),
-                            // Injected text layout descriptor block
                             if (description != null && description.trim().isNotEmpty) ...[
                               const SizedBox(height: 4),
                               Text(
@@ -588,7 +778,6 @@ Widget _buildTasksTabFeed() {
                           icon: const Icon(Icons.check_circle, size: 16, color: Colors.white),
                           label: const Text('Approve & Pay', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
                           onPressed: () async {
-                            // Passing down interval argument logic payload string references directly
                             await _approveTaskTransaction(taskId, reward, title, recurringInterval);
                             setState(() {});
                           },
@@ -607,7 +796,6 @@ Widget _buildTasksTabFeed() {
 
   Widget _buildGoalsTabFeed() {
     return FutureBuilder<List<dynamic>>(
-      // 🎯 FIX: Changed from a static string to a dynamic childId key to flush the cache
       key: ValueKey('goals_tab_stream_${widget.childId}'),
       future: supabaseService.client
           .from('savings_goals')
@@ -817,8 +1005,6 @@ Widget _buildTasksTabFeed() {
     );
   }
 
-  // --- CORE ENGINE BALANCING SETTLER TRANSACTION LOGIC ---
-
   Future<void> _approveTaskTransaction(String taskId, double amount, String taskTitle, String recurringInterval) async {
     try {
       final taskQuery = await supabaseService.client
@@ -827,20 +1013,18 @@ Widget _buildTasksTabFeed() {
                 .eq('id', taskId)
                 .maybeSingle();
 
-            final String? dueDateStr = taskQuery?['due_date'];
-            final DateTime? dueDate = dueDateStr != null ? DateTime.parse(dueDateStr) : null;
-            final bool isPastDueDate = dueDate != null && DateTime.now().isAfter(dueDate);
+      final String? dueDateStr = taskQuery?['due_date'];
+      final DateTime? dueDate = dueDateStr != null ? DateTime.parse(dueDateStr) : null;
+      final bool isPastDueDate = dueDate != null && DateTime.now().isAfter(dueDate);
 
-            // 👈 ADD THIS: If it's a one-time task OR the lifespan has expired, mark as completed permanently
-            if (recurringInterval == 'none' || isPastDueDate) {
-              await supabaseService.client.from('tasks').update({'status': 'completed'}).eq('id', taskId);
-            } else {
-              // Reset dynamic payload parameters for the next period run instead of completing entirely
-              await supabaseService.client.from('tasks').update({
-                'status': 'assigned',
-                'proof_url': null,
-              }).eq('id', taskId);
-            }
+      if (recurringInterval == 'none' || isPastDueDate) {
+        await supabaseService.client.from('tasks').update({'status': 'completed'}).eq('id', taskId);
+      } else {
+        await supabaseService.client.from('tasks').update({
+          'status': 'assigned',
+          'proof_url': null,
+        }).eq('id', taskId);
+      }
       await supabaseService.client.rpc('increment_completed_tasks', params: {'user_id': widget.childId});
 
       final List<dynamic> walletRecords = await supabaseService.client
@@ -848,9 +1032,9 @@ Widget _buildTasksTabFeed() {
           .select('total_balance, save_balance, spend_balance, share_balance')
           .eq('profile_id', widget.childId);
 
-      final double saveIncrement = amount * 0.70;
-      final double spendIncrement = amount * 0.20;
-      final double shareIncrement = amount * 0.10;
+      final double saveIncrement = amount * (_savePercentage / 100.0);
+      final double spendIncrement = amount * (_spendPercentage / 100.0);
+      final double shareIncrement = amount * (_sharePercentage / 100.0);
 
       if (walletRecords.isNotEmpty) {
         final currentWallet = walletRecords.first;

@@ -633,7 +633,7 @@ Future<void> _showParentTaskManagerBottomSheet(String childName, String childId)
     }
   }
 
-  void _showTransferMoneyBottomSheet(String childName, String childId) {
+void _showTransferMoneyBottomSheet(String childName, String childId) {
   final TextEditingController amountController = TextEditingController();
   final formKey = GlobalKey<FormState>();
 
@@ -658,8 +658,9 @@ Future<void> _showParentTaskManagerBottomSheet(String childName, String childId)
           children: [
             Text('Transfer to $childName 💸', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
+            // 🎯 VISUAL TWEAK: Clarified that the split matches the parent's current rule configuration
             const Text(
-              'Funds will be instantly split using the Smart Money Rule (70% Save, 20% Spend, 10% Share).',
+              'Funds will be instantly distributed across pockets based on your configured matrix split rules.',
               style: TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
             ),
             const SizedBox(height: 16),
@@ -685,7 +686,7 @@ Future<void> _showParentTaskManagerBottomSheet(String childName, String childId)
               width: double.infinity,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF10B981), // Green accents for instant transfers
+                  backgroundColor: const Color(0xFF10B981), 
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 ),
@@ -694,15 +695,28 @@ Future<void> _showParentTaskManagerBottomSheet(String childName, String childId)
                   final double transferAmount = double.parse(amountController.text.trim());
                   
                   try {
+                    // 🎯 FIX 1: Fetch the customized pocket parameters for this child live on execution
+                    final profileSnapshot = await supabaseService.client
+                        .from('profiles')
+                        .select('save_reward_percentage, spend_reward_percentage, share_reward_percentage')
+                        .eq('id', childId)
+                        .maybeSingle();
+
+                    // Fallback securely back to 70-20-10 if rows are missing or unassigned
+                    final double savePct = (profileSnapshot?['save_reward_percentage'] as num?)?.toDouble() ?? 70.0;
+                    final double spendPct = (profileSnapshot?['spend_reward_percentage'] as num?)?.toDouble() ?? 20.0;
+                    final double sharePct = (profileSnapshot?['share_reward_percentage'] as num?)?.toDouble() ?? 10.0;
+
                     // Fetch current wallet structural profile matrices
                     final List<dynamic> walletRecords = await supabaseService.client
                         .from('wallets')
                         .select('total_balance, save_balance, spend_balance, share_balance')
                         .eq('profile_id', childId);
 
-                    final double saveIncrement = transferAmount * 0.70;
-                    final double spendIncrement = transferAmount * 0.20;
-                    final double shareIncrement = transferAmount * 0.10;
+                    // 🎯 FIX 2: Apply dynamic percentages to the calculations
+                    final double saveIncrement = transferAmount * (savePct / 100.0);
+                    final double spendIncrement = transferAmount * (spendPct / 100.0);
+                    final double shareIncrement = transferAmount * (sharePct / 100.0);
 
                     if (walletRecords.isNotEmpty) {
                       final currentWallet = walletRecords.first;
@@ -816,8 +830,8 @@ Future<void> _showParentTaskManagerBottomSheet(String childName, String childId)
     }
   }
 
-  // --- Core Wallet Balance Settler Transaction Logic ---
-Future<void> _approveTaskAndDisburseFunds(String taskId, String childId, double amount, String taskTitle) async {
+// --- Core Wallet Balance Settler Transaction Logic ---
+  Future<void> _approveTaskAndDisburseFunds(String taskId, String childId, double amount, String taskTitle) async {
     try {
       // 1. Mark task as completed in Postgres
       await supabaseService.client
@@ -831,16 +845,28 @@ Future<void> _approveTaskAndDisburseFunds(String taskId, String childId, double 
         params: {'user_id': childId}
       );
 
+      // 🎯 FIX 1: Fetch the custom bucket ratio percentages set by the parent for this child
+      final profileSnapshot = await supabaseService.client
+          .from('profiles')
+          .select('save_reward_percentage, spend_reward_percentage, share_reward_percentage')
+          .eq('id', childId)
+          .maybeSingle();
+
+      // Guard values with clean fallback defaults back to 70-20-10 if unassigned in database rows
+      final double savePct = (profileSnapshot?['save_reward_percentage'] as num?)?.toDouble() ?? 70.0;
+      final double spendPct = (profileSnapshot?['spend_reward_percentage'] as num?)?.toDouble() ?? 20.0;
+      final double sharePct = (profileSnapshot?['share_reward_percentage'] as num?)?.toDouble() ?? 10.0;
+
       // 3. FETCH current wallet values directly from your table
       final List<dynamic> walletRecords = await supabaseService.client
           .from('wallets')
           .select('total_balance, save_balance, spend_balance, share_balance')
           .eq('profile_id', childId);
 
-      // 🧮 FORMULAIC SPLIT ENGINE (70 / 20 / 10)
-      final double saveIncrement = amount * 0.70;
-      final double spendIncrement = amount * 0.20;
-      final double shareIncrement = amount * 0.10;
+      // 🎯 FIX 2: Dynamic Split Engine using the retrieved custom percentage parameters
+      final double saveIncrement = amount * (savePct / 100.0);
+      final double spendIncrement = amount * (spendPct / 100.0);
+      final double shareIncrement = amount * (sharePct / 100.0);
 
       if (walletRecords.isNotEmpty) {
         // --- CASE A: WALLET EXISTS -> UPDATE BALANCES ---
@@ -2004,7 +2030,6 @@ void showSmartMoneyPlanBottomSheet(BuildContext context, WalletModel wallet, Voi
 
                       // 🟢 SAVE TARGET SEGMENT ROW
                       _buildAllocationCard(
-                        liveValue: (totalCoins * 0.70).toStringAsFixed(2),
                         title: '💚 Save 70% - Be Smart!',
                         subtitle: 'Put 70% of your money into savings for your big dreams like that gaming console or bicycle! This helps you reach your goals faster! 🎯',
                         icon: '🐷',
@@ -2016,7 +2041,6 @@ void showSmartMoneyPlanBottomSheet(BuildContext context, WalletModel wallet, Voi
 
                       // 🔵 SPEND TARGET SEGMENT ROW
                       _buildAllocationCard(
-                        liveValue: (totalCoins * 0.20).toStringAsFixed(2),
                         title: '💙 Spend 20% - Have Fun!',
                         subtitle: 'Use 20% for fun stuff you want right now! Snacks, games, or treats - enjoy the rewards of your hard work! 🎉',
                         icon: '🛍️',
@@ -2028,7 +2052,6 @@ void showSmartMoneyPlanBottomSheet(BuildContext context, WalletModel wallet, Voi
 
                       // 💗 SHARE TARGET SEGMENT ROW
                       _buildAllocationCard(
-                        liveValue: (totalCoins * 0.10).toStringAsFixed(2),
                         title: '💖 Share 10% - Be Kind!',
                         subtitle: 'Give 10% to help others! Buy gifts for family, donate to charity, or help a friend. Sharing makes the world better! ✨',
                         icon: '💝',
@@ -2084,7 +2107,6 @@ void showSmartMoneyPlanBottomSheet(BuildContext context, WalletModel wallet, Voi
 
 // 📦 Reusable component helper function to keep build layout footprint clean
 Widget _buildAllocationCard({
-  required String liveValue,
   required String title,
   required String subtitle,
   required String icon,
@@ -2118,9 +2140,6 @@ Widget _buildAllocationCard({
                   Text(title, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: textColor)),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text('$liveValue 🟡', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: textColor.withOpacity(0.8))),
-                    ],
                   ),
                 ],
               ),
