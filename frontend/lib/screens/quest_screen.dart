@@ -334,7 +334,7 @@ class _InteractiveQuestWidgetState extends State<InteractiveQuestWidget> {
       );
     }
 
-    // 2. 💾 SUPABASE REWARD INTEGRATION: Commits parent settings to data ledger
+    // 2. 💾 SUPABASE REWARD INTEGRATION: Commits parent settings to data ledgerr
     if (isCorrect) {
       try {
         // 📊 HARDCODED ALLOCATION CONFIG: 70% Save / 20% Spend / 10% Share
