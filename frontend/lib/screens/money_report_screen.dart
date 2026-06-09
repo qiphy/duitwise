@@ -247,7 +247,6 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
 
                                       final String childUsername = data['username'] ?? 'Your';
 
-                                      // Fetch fresh atomic rows right when the button is clicked
                                       final buttonFutures = await Future.wait([
                                         supabaseService.client
                                             .from('wallets')
@@ -273,7 +272,6 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
                                       );
 
                                       if (context.mounted) {
-                                        // We pass transactionsForReport which is explicitly declared right above
                                         await SummaryService().generateAndDownloadReport(
                                           context, 
                                           activeWallet, 
@@ -300,19 +298,21 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
                         ],
                       ),
                       const SizedBox(height: 16),
+                      
+                      // 🔄 UPDATED KPI ITEMS LATCH LANE:
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           _buildKpiItem('Total Earned', 'RM ${(data['totalEarned'] ?? 0.0).toStringAsFixed(2)}'),
                           _buildKpiItem('Total Saved', 'RM ${(data['savingsAllocated'] ?? 0.0).toStringAsFixed(2)}'),
-                          _buildKpiItem('Savings Rate', '$rate%'),
+                          // 🪙 CHANGED: Swapped out Savings Rate for Spendable Amount metric row tracking
+                          _buildKpiItem('Spendable Amount', 'RM ${(data['liveSpendBalance'] ?? 0.00).toStringAsFixed(2)}'),
                         ],
                       ),
                       const SizedBox(height: 16),
                       const Divider(color: Colors.white24, height: 1),
                       const SizedBox(height: 12),
                       
-                      // AI Financial Literacy Progress UI component view
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -356,7 +356,7 @@ class _MoneyReportScreenState extends State<MoneyReportScreen> {
                   const Color(0xFF15803D),
                 ),
                 _buildAchievementRow(
-                  '✅  Allocated $rate% of total earnings toward your future pockets',
+                  '✅  Allocated funds smartly into your savings pockets', // ✨ Streamlined text copy
                   const Color(0xFFDCFCE7),
                   const Color(0xFF15803D),
                 ),

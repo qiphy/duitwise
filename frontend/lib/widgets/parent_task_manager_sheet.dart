@@ -418,12 +418,12 @@ Widget _buildHeaderControlPad() {
     );
   }
 
-  Widget _buildTasksTabFeed() {
+Widget _buildTasksTabFeed() {
     return FutureBuilder<List<dynamic>>(
       key: const ValueKey('tasks_tab_stream'),
       future: supabaseService.client
           .from('tasks')
-          .select('id, title, reward_amount, status, proof_url')
+          .select('id, title, description, reward_amount, status, proof_url, recurring_interval')
           .eq('profile_id', widget.childId)
           .order('id', ascending: false),
       builder: (context, taskSnapshot) {
@@ -442,9 +442,11 @@ Widget _buildHeaderControlPad() {
             final t = tasks[idx];
             final String taskId = t['id'].toString();
             final String title = t['title'] ?? 'Secret Mission';
+            final String? description = t['description'];
             final double reward = (t['reward_amount'] ?? 0.0).toDouble();
             final String status = t['status'] ?? 'assigned';
             final String? proofUrl = t['proof_url'];
+            final String recurringInterval = t['recurring_interval'] ?? 'none';
 
             final bool isPending = status == 'pending';
             final bool isCompleted = status == 'completed';
@@ -467,8 +469,45 @@ Widget _buildHeaderControlPad() {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                            const SizedBox(height: 4),
+                            // Title row bundled alongside dynamic interval visual layout tags
+                            Wrap(
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                if (recurringInterval != 'none') ...[
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFE0F2FE),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.cached_rounded, size: 10, color: Color(0xFF0369A1)),
+                                        const SizedBox(width: 2),
+                                        Text(
+                                          recurringInterval.toUpperCase(),
+                                          style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Color(0xFF0369A1)),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            // Injected text layout descriptor block
+                            if (description != null && description.trim().isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                description,
+                                style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                            const SizedBox(height: 6),
                             Text('Reward: RM ${reward.toStringAsFixed(2)} 🟡', style: const TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold)),
                           ],
                         ),
@@ -548,7 +587,8 @@ Widget _buildHeaderControlPad() {
                           icon: const Icon(Icons.check_circle, size: 16, color: Colors.white),
                           label: const Text('Approve & Pay', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
                           onPressed: () async {
-                            await _approveTaskTransaction(taskId, reward, title);
+                            // Passing down interval argument logic payload string references directly
+                            await _approveTaskTransaction(taskId, reward, title, recurringInterval);
                             setState(() {});
                           },
                         ),
@@ -754,7 +794,7 @@ Widget _buildHeaderControlPad() {
               elevation: 0,
             ),
             icon: const Icon(Icons.add_task_rounded, color: Colors.white, size: 18),
-            label: const Text('Assign Mission', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            label: const Text('Assign Task', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             onPressed: () => Navigator.pop(context, 'assign'),
           ),
         ),
@@ -777,9 +817,28 @@ Widget _buildHeaderControlPad() {
 
   // --- CORE ENGINE BALANCING SETTLER TRANSACTION LOGIC ---
 
-  Future<void> _approveTaskTransaction(String taskId, double amount, String taskTitle) async {
+  Future<void> _approveTaskTransaction(String taskId, double amount, String taskTitle, String recurringInterval) async {
     try {
-      await supabaseService.client.from('tasks').update({'status': 'completed'}).eq('id', taskId);
+      final taskQuery = await supabaseService.client
+                .from('tasks')
+                .select('due_date')
+                .eq('id', taskId)
+                .maybeSingle();
+
+            final String? dueDateStr = taskQuery?['due_date'];
+            final DateTime? dueDate = dueDateStr != null ? DateTime.parse(dueDateStr) : null;
+            final bool isPastDueDate = dueDate != null && DateTime.now().isAfter(dueDate);
+
+            // 👈 ADD THIS: If it's a one-time task OR the lifespan has expired, mark as completed permanently
+            if (recurringInterval == 'none' || isPastDueDate) {
+              await supabaseService.client.from('tasks').update({'status': 'completed'}).eq('id', taskId);
+            } else {
+              // Reset dynamic payload parameters for the next period run instead of completing entirely
+              await supabaseService.client.from('tasks').update({
+                'status': 'assigned',
+                'proof_url': null,
+              }).eq('id', taskId);
+            }
       await supabaseService.client.rpc('increment_completed_tasks', params: {'user_id': widget.childId});
 
       final List<dynamic> walletRecords = await supabaseService.client

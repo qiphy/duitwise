@@ -337,17 +337,33 @@ class _InteractiveQuestWidgetState extends State<InteractiveQuestWidget> {
     // 2. 💾 SUPABASE REWARD INTEGRATION: Commits parent settings to data ledger
     if (isCorrect) {
       try {
+        // 📊 HARDCODED ALLOCATION CONFIG: 70% Save / 20% Spend / 10% Share
+        const double savePercentage = 0.70;
+        const double spendPercentage = 0.20;
+        const double sharePercentage = 0.10;
+
+        // Calculate the breakdown amounts cleanly
+        final double saveShare = _calibratedCoinAmount * savePercentage;
+        final double spendShare = _calibratedCoinAmount * spendPercentage;
+        final double shareShare = _calibratedCoinAmount * sharePercentage;
+
         await Future.wait([
-          supabaseService.client.rpc('increment_child_coins', params: {
-            'user_id': profileId, 
-            'coin_delta': _calibratedCoinAmount
+          // A. Fire the all-in-one consolidated wallet balance updater
+          supabaseService.client.rpc('increment_pocket_balances_fixed', params: {
+            'target_user_id': profileId,
+            'total_reward': _calibratedCoinAmount,
+            'save_delta': saveShare,
+            'spend_delta': spendShare,
+            'share_delta': shareShare,
           }),
           
+          // B. Increment experience points tracker
           supabaseService.client.rpc('increment_child_xp', params: {
             'user_id': profileId, 
             'xp_delta': _calibratedXpAmount
           }),
           
+          // C. Log event history audit trail item
           supabaseService.client.from('transactions').insert({
             'title': 'Video Question Milestone',
             'profile_id': profileId,

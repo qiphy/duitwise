@@ -34,6 +34,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   late Future<DashboardData> _dashboardDataFuture;
   int _currentIndex = 0;
+  double _monthlyTransferLimit = 500.00; // State variable inside _HomeScreenState
 
   // --- FPX Linkage Configuration Parameters ---
   bool _isBankLinked = false;
@@ -80,6 +81,7 @@ Future<DashboardData> _fetchDashboardTelemetry() async {
             *,
             is_frozen,
             parental_content_restriction,
+            monthly_transfer_limit,
             parent_name:parent_id(username)
           ''')
           .eq('id', loggedInUserId)
@@ -142,11 +144,20 @@ Future<DashboardData> _fetchDashboardTelemetry() async {
       // AUTOMATION LINK: Parse bank metadata attributes straight into active state fields for parents
       final String? dbBank = profileDbResponse['linked_bank_name'];
       final String? dbAccount = profileDbResponse['bank_account_number'];
+      final double dbLimit = (profileDbResponse['monthly_transfer_limit'] as num?)?.toDouble() ?? 500.00;
+
+      if (profileMetrics.role == 'parent') {
+        final double dbLimit = (profileDbResponse['monthly_transfer_limit'] as num?)?.toDouble() ?? 500.00;
+        _monthlyTransferLimit = dbLimit;
+      } else {
+        _monthlyTransferLimit = 0.00; // 👈 Hard-lock children visibility to exactly zero
+      }
       
       if (dbBank != null && dbAccount != null) {
         _isBankLinked = true;
         _selectedBank = dbBank;
         _accountNumberController.text = dbAccount;
+        _monthlyTransferLimit = dbLimit;
       } else {
         _isBankLinked = false;
       }
@@ -160,6 +171,9 @@ Future<DashboardData> _fetchDashboardTelemetry() async {
   void _showAddTaskBottomSheet(String childName, String childId) {
     final TextEditingController taskTitleController = TextEditingController();
     final TextEditingController taskRewardController = TextEditingController();
+    final TextEditingController taskDescController = TextEditingController(); 
+    String selectedInterval = 'none'; 
+    DateTime? selectedDueDate;
     final formKey = GlobalKey<FormState>();
 
     showModalBottomSheet(
@@ -206,6 +220,81 @@ Future<DashboardData> _fetchDashboardTelemetry() async {
                 ),
                 validator: (val) => val == null || double.tryParse(val) == null ? 'Please enter a valid reward amount' : null,
               ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: taskDescController,
+                decoration: InputDecoration(
+                  labelText: 'Task Description (Optional)',
+                  hintText: 'e.g., Wipe down the shelves and vacuum under the bed',
+                  filled: true,
+                  fillColor: Colors.grey[100],
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              StatefulBuilder(
+                builder: (context, setModalState) {
+                  return DropdownButtonFormField<String>(
+                    decoration: InputDecoration(
+                      labelText: 'Repeat Interval',
+                      filled: true,
+                      fillColor: Colors.grey[100],
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'none', child: Text('One-time Task')),
+                      DropdownMenuItem(value: 'daily', child: Text('Daily')),
+                      DropdownMenuItem(value: 'weekly', child: Text('Weekly')),
+                    ],
+                    onChanged: (val) {
+                      setModalState(() {
+                        selectedInterval = val ?? 'none';
+                      });
+                    },
+                  );
+                },
+              ),
+              const SizedBox(height: 12),
+              StatefulBuilder(
+                builder: (context, setModalState) {
+                  return InkWell(
+                    onTap: () async {
+                      final DateTime? picked = await showDatePicker(
+                        context: context,
+                        initialDate: DateTime.now().add(const Duration(days: 1)),
+                        firstDate: DateTime.now(),
+                        lastDate: DateTime.now().add(const Duration(days: 365)),
+                      );
+                      if (picked != null) {
+                        setModalState(() => selectedDueDate = picked);
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[100],
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            selectedDueDate == null 
+                                ? 'Set End Date (Optional)' 
+                                : 'End Date: ${selectedDueDate!.toLocal().toString().split(' ')[0]}',
+                            style: TextStyle(
+                              color: selectedDueDate == null ? Colors.grey[600] : Colors.black,
+                              fontSize: 14,
+                            ),
+                          ),
+                          Icon(Icons.calendar_month_rounded, color: Colors.grey[600], size: 20),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
               const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,
@@ -222,8 +311,11 @@ Future<DashboardData> _fetchDashboardTelemetry() async {
                       await supabaseService.client.from('tasks').insert({
                         'profile_id': childId,
                         'title': taskTitleController.text.trim(),
+                        'description': taskDescController.text.trim(),
                         'reward_amount': double.parse(taskRewardController.text.trim()),
                         'status': 'assigned',
+                        'recurring_interval': selectedInterval,
+                        'due_date': selectedDueDate?.toIso8601String(),
                       });
 
                       if (context.mounted) {
@@ -251,6 +343,84 @@ Future<DashboardData> _fetchDashboardTelemetry() async {
       ),
     );
   }
+
+  void _showAdjustLimitDialog() {
+  final TextEditingController limitController = TextEditingController(text: _monthlyTransferLimit.toStringAsFixed(2));
+  final formKey = GlobalKey<FormState>();
+
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: const Text('Adjust Transfer Limit ⚙️', style: TextStyle(fontWeight: FontWeight.bold)),
+      content: Form(
+        key: formKey,
+        child: TextFormField(
+          controller: limitController,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          autofocus: true,
+          decoration: InputDecoration(
+            labelText: 'Monthly Spending Ceiling (RM)',
+            prefixText: 'RM ',
+            filled: true,
+            fillColor: Colors.grey[100],
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+          ),
+          validator: (value) {
+            if (value == null || double.tryParse(value) == null) return 'Please enter a valid number';
+            if (double.parse(value) < 0) return 'Limit cannot be negative!';
+            return null;
+          },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF8B5CF6),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          onPressed: () async {
+            if (!formKey.currentState!.validate()) return;
+            final double newLimit = double.parse(limitController.text.trim());
+            final String? parentId = supabaseService.currentUserId;
+
+            if (parentId != null) {
+              try {
+                await supabaseService.client
+                    .from('profiles')
+                    .update({'monthly_transfer_limit': newLimit})
+                    .eq('id', parentId);
+
+                setState(() {
+                  _monthlyTransferLimit = newLimit;
+                });
+
+                if (context.mounted) {
+                  Navigator.pop(context);
+                  _refreshData();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Monthly transfer limit updated to RM ${newLimit.toStringAsFixed(2)}!')),
+                  );
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Failed to update ceiling settings: $e')),
+                  );
+                }
+              }
+            }
+          },
+          child: const Text('Save Limit', style: TextStyle(color: Colors.white)),
+        ),
+      ],
+    ),
+  );
+}
 
 Future<void> _showParentTaskManagerBottomSheet(String childName, String childId) async {
   // 🧠 Await the explicit action code returned upon closing the context frame channel
@@ -1114,15 +1284,17 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
   bool isLoadingConfig = true;
   
   String activeMode = 'pay'; 
-  // Tracks whether the scanner should be active within the Pay tab frame
   bool isScannerActive = true; 
 
-  final double liquidAvailableFunds = ((wallet.totalBalance ?? 0.00) * 0.20).toDouble();
+  // --- NEW STATE TRACKERS ---
+  bool keywordDetected = false;
+  bool useShareBucket = false;
+
+  final List<String> shareKeywords = ['gift', 'present', 'donation', 'charity', 'birthday'];
 
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
-    // 🎯 HARD-LOCK LIFECYCLE GATES: Forces explicit close interaction routes
     isDismissible: false,
     enableDrag: false,
     backgroundColor: Colors.transparent,
@@ -1210,7 +1382,6 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
                   child: const Text('Close', style: TextStyle(color: Color(0xFF4B5563), fontWeight: FontWeight.bold)),
                 ),
               ] else ...[
-                // --- REPROPORTIONED CUSTOM SEGMENTED TABS (No line underneath) ---
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -1233,7 +1404,6 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
                   ),
                   child: Row(
                     children: [
-                      // Pay Button Segment
                       Expanded(
                         child: GestureDetector(
                           onTap: () {
@@ -1276,13 +1446,12 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
                       
                       const SizedBox(width: 6), 
 
-                      // Transfer Button Segment
                       Expanded(
                         child: GestureDetector(
                           onTap: () {
                             setLocalState(() {
                               activeMode = 'transfer';
-                              isScannerActive = false; // Disposes camera view immediately
+                              isScannerActive = false; 
                             });
                           },
                           child: Container(
@@ -1326,14 +1495,12 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // --- INLINE EMBEDDED SCANNER / INPUT LOGIC LANE ---
                       if (isPayTab && isScannerActive) ...[
                         const Text(
                           'Align Merchant QR Code within the frame:',
                           style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF4B5563)),
                         ),
                         const SizedBox(height: 8),
-
                         EmbeddedQRScanner(
                           onCodeScanned: (scannedCode) {
                             setLocalState(() {
@@ -1342,8 +1509,6 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
                             });
                           },
                         ),
-
-                        const SizedBox(height: 8),
                         const SizedBox(height: 8),
                       ] else ...[
                         TextFormField(
@@ -1373,30 +1538,7 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
                         const SizedBox(height: 12),
                       ],
 
-                      // --- AMOUNT ---
-                      TextFormField(
-                        controller: amountController,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        decoration: InputDecoration(
-                          labelText: 'Amount to Disburse (RM)',
-                          hintText: '0.00',
-                          prefixIcon: const Icon(Icons.payments_rounded, color: Color(0xFF10B981), size: 20),
-                          filled: true,
-                          fillColor: const Color(0xFFF9FAFB),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                        ),
-                        validator: (val) {
-                          if (val == null || double.tryParse(val) == null) return 'Please input a valid number metric';
-                          final double parsedAmount = double.parse(val);
-                          if (parsedAmount <= 0) return 'Transaction must be greater than RM 0.00';
-                          // Strict enforcement against the actual live spend bucket allocation
-                          if (parsedAmount > (wallet.spendBalance ?? 0.0)) return 'Insufficient balance in your Spend Bucket!';
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 12),
-
-                      // --- REASON REFERENCE ---
+                      // --- REASON REFERENCE (Moved up so the Bucket option fields dynamically follow it) ---
                       TextFormField(
                         controller: referenceController,
                         decoration: InputDecoration(
@@ -1407,14 +1549,103 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
                           fillColor: const Color(0xFFF9FAFB),
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
                         ),
+                        onChanged: (val) {
+                          // Real-time evaluation of the typed description against keywords
+                          final text = val.toLowerCase();
+                          final dynamicMatch = shareKeywords.any((keyword) => text.contains(keyword));
+                          setLocalState(() {
+                            keywordDetected = dynamicMatch;
+                            if (!keywordDetected) useShareBucket = false; // Reset if text changed away
+                          });
+                        },
                         validator: (val) => val == null || val.trim().isEmpty ? 'Please add a small reason description' : null,
+                      ),
+                      const SizedBox(height: 12),
+
+                  // --- NEW DYNAMIC SHARE BUCKET OPT-IN TILE ---
+                  if (keywordDetected) ...[
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), // Adjusted padding for Row layout
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEF3C7), // Warm Amber hint color
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFFBBF24), width: 1),
+                      ),
+                      // 🎯 FIX: Using a simple Row prevents ListTile ink-splash layer conflicts entirely
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text(
+                                  '💝 Use Share Bucket funds?',
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF92400E)),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  'Available Share balance: RM ${(wallet.shareBalance ?? 0.0).toStringAsFixed(2)}',
+                                  style: const TextStyle(fontSize: 11, color: Color(0xFFB45309)),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Switch.adaptive(
+                            activeColor: const Color(0xFFD97706),
+                            value: useShareBucket,
+                            onChanged: (bool value) {
+                              setLocalState(() => useShareBucket = value);
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
+                      // --- AMOUNT ---
+                      TextFormField(
+                        controller: amountController,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: InputDecoration(
+                          labelText: useShareBucket ? 'Amount from Share Bucket (RM)' : 'Amount to Disburse (RM)',
+                          hintText: '0.00',
+                          prefixIcon: Icon(
+                            Icons.payments_rounded, 
+                            color: useShareBucket ? const Color(0xFFD97706) : const Color(0xFF10B981), 
+                            size: 20
+                          ),
+                          filled: true,
+                          fillColor: const Color(0xFFF9FAFB),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                        ),
+                        validator: (val) {
+                          if (val == null || double.tryParse(val) == null) return 'Please input a valid number metric';
+                          final double parsedAmount = double.parse(val);
+                          if (parsedAmount <= 0) return 'Transaction must be greater than RM 0.00';
+                          
+                          // Dynamic conditional validation step
+                          if (useShareBucket) {
+                            if (parsedAmount > (wallet.shareBalance ?? 0.0)) {
+                              return 'Insufficient balance in your Share Bucket!';
+                            }
+                          } else {
+                            if (parsedAmount > (wallet.spendBalance ?? 0.0)) {
+                              return 'Insufficient balance in your Spend Bucket!';
+                            }
+                          }
+                          return null;
+                        },
                       ),
                       const SizedBox(height: 24),
 
                       // --- OUTBOUND SUBMIT BUTTON ---
                       ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF1F2937),
+                          backgroundColor: useShareBucket ? const Color(0xFFD97706) : const Color(0xFF1F2937),
                           padding: const EdgeInsets.symmetric(vertical: 16),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                           elevation: 0,
@@ -1435,33 +1666,44 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
                           try {
                             final walletSnapshot = await supabaseService.client
                                 .from('wallets')
-                                .select('total_balance, spend_balance')
+                                .select('total_balance, spend_balance, share_balance')
                                 .eq('profile_id', currentProfileId)
                                 .maybeSingle();
 
-                        if (walletSnapshot != null) {
-                          final double backendTotal = (walletSnapshot['total_balance'] ?? 0.0).toDouble();
-                          final double backendSpend = (walletSnapshot['spend_balance'] ?? 0.0).toDouble();
+                            if (walletSnapshot != null) {
+                              final double backendTotal = (walletSnapshot['total_balance'] ?? 0.0).toDouble();
+                              final double backendSpend = (walletSnapshot['spend_balance'] ?? 0.0).toDouble();
+                              final double backendShare = (walletSnapshot['share_balance'] ?? 0.0).toDouble();
 
-                          final String calculatedCategory = isPayTab 
-                              ? TransactionCategorizer.categorize(logTitle)
-                              : 'Peer Transfer';
+                              final String calculatedCategory = isPayTab 
+                                  ? TransactionCategorizer.categorize(logTitle)
+                                  : 'Peer Transfer';
 
-                          await Future.wait([
-                            // Deducts the spent money from total tracking and your active fluid spend pool
-                            supabaseService.client.from('wallets').update({
-                              'total_balance': backendTotal - debitValue,
-                              'spend_balance': backendSpend - debitValue,
-                            }).eq('profile_id', currentProfileId),
-                            
-                            supabaseService.client.from('transactions').insert({
-                              'profile_id': currentProfileId,
-                              'title': '$logTitle (${isPayTab ? 'Paid to' : 'Sent to'} $targetReceiverId)',
-                              'amount': -debitValue, 
-                              'category': calculatedCategory, 
-                              'created_at': DateTime.now().toIso8601String(),
-                            }),
-                          ]);
+                              // Prep targeted balances update dictionary dynamically
+                              final Map<String, dynamic> walletUpdateData = {
+                                'total_balance': backendTotal - debitValue,
+                              };
+
+                              if (useShareBucket) {
+                                walletUpdateData['share_balance'] = backendShare - debitValue;
+                              } else {
+                                walletUpdateData['spend_balance'] = backendSpend - debitValue;
+                              }
+
+                              await Future.wait([
+                                supabaseService.client
+                                    .from('wallets')
+                                    .update(walletUpdateData)
+                                    .eq('profile_id', currentProfileId),
+                                
+                                supabaseService.client.from('transactions').insert({
+                                  'profile_id': currentProfileId,
+                                  'title': '$logTitle (${isPayTab ? 'Paid to' : 'Sent to'} $targetReceiverId)',
+                                  'amount': -debitValue, 
+                                  'category': useShareBucket ? 'Gifts & Charity' : calculatedCategory, 
+                                  'created_at': DateTime.now().toIso8601String(),
+                                }),
+                              ]);
 
                               if (context.mounted) {
                                 Navigator.pop(context); 
@@ -1470,7 +1712,7 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     backgroundColor: const Color(0xFF16A34A),
-                                    content: Text('🎉 Successfully processed RM ${debitValue.toStringAsFixed(2)}!'),
+                                    content: Text('🎉 Successfully processed RM ${debitValue.toStringAsFixed(2)} from your ${useShareBucket ? 'Share' : 'Spend'} Bucket!'),
                                   ),
                                 );
                               }
@@ -1488,7 +1730,7 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
                         child: isProcessing
                             ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
                             : Text(
-                                isPayTab ? 'Pay' : 'Transfer', 
+                                isPayTab ? (useShareBucket ? 'Pay with Share' : 'Pay') : (useShareBucket ? 'Transfer Share' : 'Transfer'), 
                                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                               ),
                       ),
@@ -1503,7 +1745,6 @@ void _showChildPaymentSimulationBottomSheet(BuildContext context, dynamic wallet
     ),
   );
 }
-
 
 // 🛠️ FIX: Added 'VoidCallback onFinish' signature to match the dashboard call route parameters
 void showSmartMoneyPlanBottomSheet(BuildContext context, WalletModel wallet, VoidCallback onFinish) {
@@ -2032,7 +2273,7 @@ Widget _buildStatBox(String metric, String label, Color metricColor) {
         FutureBuilder<List<dynamic>>(
           future: supabaseService.client
               .from('tasks')
-              .select('id, title, reward_amount, status, proof_url, assigned_at')
+              .select('id, title, reward_amount, status, proof_url, assigned_at, due_date') // 👈 CHANGED
               .eq('profile_id', childId)
               .order('id', ascending: false),
           builder: (context, snapshot) {
@@ -2063,14 +2304,13 @@ Widget _buildStatBox(String metric, String label, Color metricColor) {
               );
             }
 
-            return ListView.builder(
+return ListView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               itemCount: tasksList.length,
               itemBuilder: (context, index) {
                 final task = tasksList[index];
                 
-                // 🛠️ TYPE FIX: Safely parse id parameters regardless of whether your schema uses int or uuid types
                 final String taskId = task['id'] is num 
                     ? (task['id'] as num).toString() 
                     : task['id'].toString();
@@ -2082,6 +2322,12 @@ Widget _buildStatBox(String metric, String label, Color metricColor) {
                 final String assignedDate = rawDate.isNotEmpty 
                     ? DateTime.parse(rawDate).toLocal().toString().split(' ')[0] 
                     : 'Recent';
+
+                // 👈 ADD THIS: Extract, check, and format the deadline date parameters
+                final String? rawDueDate = task['due_date'];
+                final DateTime? dueDate = rawDueDate != null ? DateTime.parse(rawDueDate).toLocal() : null;
+                final String formattedDueDate = dueDate != null ? dueDate.toString().split(' ')[0] : '';
+                final bool isOverdue = dueDate != null && DateTime.now().isAfter(dueDate) && status != 'completed';
 
                 bool isPendingOrDone = status == 'pending' || status == 'completed';
 
@@ -2101,7 +2347,7 @@ Widget _buildStatBox(String metric, String label, Color metricColor) {
                       child: const Icon(Icons.assignment_turned_in_rounded, color: Color(0xFF8B5CF6)),
                     ),
                     title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF1F2937))),
-                    subtitle: Column(
+subtitle: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const SizedBox(height: 4),
@@ -2120,6 +2366,28 @@ Widget _buildStatBox(String metric, String label, Color metricColor) {
                             ),
                           ],
                         ),
+                        // 👈 ADD THIS MODULE: Renders the explicit due date information dynamically
+                        if (formattedDueDate.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.alarm_rounded, 
+                                size: 12, 
+                                color: isOverdue ? const Color(0xFFEF4444) : const Color(0xFFEAB308),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                isOverdue ? 'Overdue: $formattedDueDate ⚠️' : 'Due by: $formattedDueDate',
+                                style: TextStyle(
+                                  color: isOverdue ? const Color(0xFFEF4444) : const Color(0xFFD97706),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ],
                     ),
                     trailing: isPendingOrDone
@@ -2245,77 +2513,95 @@ Widget _buildStatBox(String metric, String label, Color metricColor) {
     );
   }
 
-  Widget _buildLinkedFPXView() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Row(
-              children: [
-                const Text('⚡', style: TextStyle(fontSize: 18)),
-                const SizedBox(width: 6),
-                Text(
-                  'FPX DIRECT DEBIT ACTIVE',
-                  style: TextStyle(color: Colors.tealAccent[400], fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5),
-                ),
-              ],
+Widget _buildLinkedFPXView() {
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            children: [
+              const Text('⚡', style: TextStyle(fontSize: 18)),
+              const SizedBox(width: 6),
+              Text(
+                'FPX DIRECT DEBIT ACTIVE',
+                style: TextStyle(color: Colors.tealAccent[400], fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+              ),
+            ],
+          ),
+          const Icon(Icons.verified_user_rounded, color: Colors.greenAccent, size: 22),
+        ],
+      ),
+      const SizedBox(height: 16),
+      Text(
+        _selectedBank,
+        style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        'Account No: ${_accountNumberController.text}',
+        style: TextStyle(color: Colors.grey[400], fontSize: 14, fontFamily: 'Courier', letterSpacing: 0.5),
+      ),
+      const SizedBox(height: 20),
+      
+      // 🔄 UPDATED LAYOUT CARD ACTIONS FOOTER BAR BELOW:
+      Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // 📊 DYNAMIC CEILING INDICATOR WITH CLICK EVENT
+          InkWell(
+            onTap: _showAdjustLimitDialog,
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 2.0),
+              child: Row(
+                children: [
+                  Text(
+                    'Limit: RM ${_monthlyTransferLimit.toStringAsFixed(2)} / month', 
+                    style: const TextStyle(color: Colors.white70, fontSize: 13)
+                  ),
+                  const SizedBox(width: 6),
+                  const Icon(Icons.edit_rounded, color: Colors.white54, size: 14),
+                ],
+              ),
             ),
-            const Icon(Icons.verified_user_rounded, color: Colors.greenAccent, size: 22),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Text(
-          _selectedBank,
-          style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          'Account No: ${_accountNumberController.text}',
-          style: TextStyle(color: Colors.grey[400], fontSize: 14, fontFamily: 'Courier', letterSpacing: 0.5),
-        ),
-        const SizedBox(height: 20),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text('Limit: RM 500.00 / month', style: TextStyle(color: Colors.white70, fontSize: 13)),
+          ),
           TextButton(
-              onPressed: () async {
-                final String? parentId = supabaseService.currentUserId;
-                if (parentId == null) return;
+            onPressed: () async {
+              final String? parentId = supabaseService.currentUserId;
+              if (parentId == null) return;
 
-                try {
-                  // 🗑️ WIPE FROM DATABASE: Clear configuration settings row variables
-                  await supabaseService.client
-                      .from('profiles')
-                      .update({
-                        'linked_bank_name': null,
-                        'bank_account_number': null,
-                      })
-                      .eq('id', parentId);
+              try {
+                await supabaseService.client
+                    .from('profiles')
+                    .update({
+                      'linked_bank_name': null,
+                      'bank_account_number': null,
+                    })
+                    .eq('id', parentId);
 
-                  setState(() {
-                    _isBankLinked = false;
-                    _accountNumberController.clear();
-                  });
-                  
-                  _refreshData();
-                } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Failed to sever bank connection: $e')),
-                    );
-                  }
+                setState(() {
+                  _isBankLinked = false;
+                  _accountNumberController.clear();
+                });
+                
+                _refreshData();
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Failed to sever bank connection: $e')),
+                  );
                 }
-              },
-              child: const Text('Disconnect', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        )
-      ],
-    );
-  }
+              }
+            },
+            child: const Text('Disconnect', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      )
+    ],
+  );
+}
 
   Widget _buildUnlinkedFPXForm() {
     final List<String> malaysianBanks = ['Bank Islam', 'Maybank', 'CIMB Bank', 'Public Bank', 'RHB Bank', 'Hong Leong Bank'];
