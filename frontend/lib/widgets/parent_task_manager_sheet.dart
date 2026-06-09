@@ -419,20 +419,21 @@ Widget _buildHeaderControlPad() {
   }
 
 Widget _buildTasksTabFeed() {
-    return FutureBuilder<List<dynamic>>(
-      key: const ValueKey('tasks_tab_stream'),
-      future: supabaseService.client
-          .from('tasks')
-          .select('id, title, description, reward_amount, status, proof_url, recurring_interval')
-          .eq('profile_id', widget.childId)
-          .order('id', ascending: false),
-      builder: (context, taskSnapshot) {
+  return FutureBuilder<List<dynamic>>(
+        // 🎯 FIX: Changed from a static string to a dynamic childId key to flush the cache
+        key: ValueKey('tasks_tab_stream_${widget.childId}'),
+        future: supabaseService.client
+            .from('tasks')
+            .select('id, title, description, reward_amount, status, proof_url, recurring_interval')
+            .eq('profile_id', widget.childId)
+            .order('id', ascending: false),
+        builder: (context, taskSnapshot) {
         if (taskSnapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator(color: Color(0xFF8B5CF6)));
         }
         final tasks = taskSnapshot.data ?? [];
         if (tasks.isEmpty) {
-          return const Center(child: Text('No missions assigned yet.', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w500)));
+          return const Center(child: Text('No tasks assigned yet.', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w500)));
         }
 
         return ListView.builder(
@@ -606,7 +607,8 @@ Widget _buildTasksTabFeed() {
 
   Widget _buildGoalsTabFeed() {
     return FutureBuilder<List<dynamic>>(
-      key: const ValueKey('goals_tab_stream'),
+      // 🎯 FIX: Changed from a static string to a dynamic childId key to flush the cache
+      key: ValueKey('goals_tab_stream_${widget.childId}'),
       future: supabaseService.client
           .from('savings_goals')
           .select('id, goal_name, target_amount, status')

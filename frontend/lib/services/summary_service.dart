@@ -13,8 +13,6 @@ import '../models.dart';
 class SummaryService {
   
   static const double _saveRatio = 0.70;
-  static const double _spendRatio = 0.20;
-  static const double _shareRatio = 0.10;
 
   /// 🧮 UNIFIED SCORING ENGINE: Processes gross earnings defensively against varying types
   static int calculateFinancialScore({
@@ -52,11 +50,8 @@ class SummaryService {
   Future<String> _fetchAIInsight(WalletModel wallet, Map<String, dynamic>? goalData, double earned, double spent) async {
     try {
       final String goalName = goalData != null ? goalData['goal_name'] ?? 'None' : 'None';
-      final double totalPool = wallet.totalBalance ?? 
-          ((wallet.saveBalance ?? 0.0) + (wallet.spendBalance ?? 0.0) + (wallet.shareBalance ?? 0.0));
 
       final String? jwtToken = supabaseService.client.auth.currentSession?.accessToken;
-
       if (jwtToken == null) return _fallbackInsight;
 
       final Map<String, String> requestHeaders = {
@@ -64,12 +59,14 @@ class SummaryService {
         "Authorization": "Bearer $jwtToken",
       };
 
+      // 🎯 FIX 1: Send the actual live discrete bucket balances instead of estimated multiplied estimations
       final response = await http.post(
         Uri.parse('https://tbrefzeytkflqyadayvs.supabase.co/functions/v1/analyze-ledger'),
         headers: requestHeaders,
         body: jsonEncode({
-          "saveBalance": totalPool * _saveRatio,
-          "spendBalance": totalPool * _spendRatio,
+          "saveBalance": wallet.saveBalance ?? 0.0,
+          "spendBalance": wallet.spendBalance ?? 0.0,
+          "shareBalance": wallet.shareBalance ?? 0.0,
           "totalEarned": earned,
           "totalSpent": spent,
           "activeDream": goalName
@@ -191,7 +188,7 @@ class SummaryService {
                 ],
               ),
 
-              // --- SECTION B: DUKITWISE AI INSIGHT CARD ---
+              // --- SECTION B: DUITWISE AI INSIGHT CARD ---
               pw.Container(
                 width: double.infinity,
                 padding: const pw.EdgeInsets.all(16),
@@ -222,9 +219,10 @@ class SummaryService {
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
-                  _buildCleanStatBox('SAVE WALLET (70%)', 'RM ${(totalCoins * _saveRatio).toStringAsFixed(2)}', '#16A34A', '#DCFCE7'),
-                  _buildCleanStatBox('SPEND CASH (20%)', 'RM ${(totalCoins * _spendRatio).toStringAsFixed(2)}', '#2563EB', '#DBEAFE'),
-                  _buildCleanStatBox('SHARE POCKET (10%)', 'RM ${(totalCoins * _shareRatio).toStringAsFixed(2)}', '#DB2777', '#FCE7F3'),
+                  // 🎯 FIX 2: Swap the synthetic multiplied total out for the real distinct model attributes directly
+                  _buildCleanStatBox('SAVE WALLET', 'RM ${(wallet.saveBalance ?? 0.0).toStringAsFixed(2)}', '#16A34A', '#DCFCE7'),
+                  _buildCleanStatBox('SPEND CASH', 'RM ${(wallet.spendBalance ?? 0.0).toStringAsFixed(2)}', '#2563EB', '#DBEAFE'),
+                  _buildCleanStatBox('SHARE POCKET', 'RM ${(wallet.shareBalance ?? 0.0).toStringAsFixed(2)}', '#DB2777', '#FCE7F3'),
                 ],
               ),
               pw.SizedBox(height: 12),
@@ -312,8 +310,6 @@ class SummaryService {
     return doc.save();
   }
 
-  /// 📑 SINGLE CHANNEL: Compiles layout using the internal context-driven score resolution
-  /// 🔥 FIX: Added the named {List<dynamic>? transactions} configuration parameter back to signature!
   Future<void> generateAndDownloadReport(
     BuildContext context, 
     WalletModel wallet, 
@@ -336,7 +332,6 @@ class SummaryService {
     }
   }
 
-  /// ⚡ PREMIUM CONCURRENT BATCH ENGINE: Resolves full-fidelity styled reports concurrently into a ZIP container.
   Future<void> generateAndShareHouseholdZipArchive(List<dynamic> kidsList) async {
     final Archive familyArchive = Archive();
 
@@ -419,20 +414,21 @@ class SummaryService {
   }
 
   static pw.Widget _buildCleanStatBox(String label, String value, String hexText, String hexBg) {
-    return pw.Container(
-      padding: const pw.EdgeInsets.all(12),
-      width: 160,
-      decoration: pw.BoxDecoration(color: PdfColor.fromHex(hexBg), borderRadius: pw.BorderRadius.circular(12)),
-      child: pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          pw.Text(label, style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex(hexText), letterSpacing: 0.5)),
-          pw.SizedBox(height: 6),
-          pw.Text(value, style: pw.TextStyle(fontSize: 15, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex(hexText))),
-        ],
-      ),
-    );
-  }
+      return pw.Container(
+        padding: const pw.EdgeInsets.all(12),
+        width: 160,
+        decoration: pw.BoxDecoration(color: PdfColor.fromHex(hexBg), borderRadius: pw.BorderRadius.circular(12)),
+        child: pw.Column(
+          // 🎯 FIX: Stripped out the invalid 'pw.SuperClip' check completely
+          crossAxisAlignment: pw.CrossAxisAlignment.start, 
+          children: [
+            pw.Text(label, style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex(hexText), letterSpacing: 0.5)),
+            pw.SizedBox(height: 6),
+            pw.Text(value, style: pw.TextStyle(fontSize: 15, fontWeight: pw.FontWeight.bold, color: PdfColor.fromHex(hexText))),
+          ],
+        ),
+      );
+    }
 
   static pw.Widget _buildSavingsGoalWidget(Map<String, dynamic>? goalData) {
     if (goalData == null) {

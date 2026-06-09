@@ -12,10 +12,11 @@ import 'transaction_history_screen.dart';
 import 'money_report_screen.dart';
 import 'package:video_player/video_player.dart';
 import '../services/summary_service.dart';
-import 'package:flutter/foundation.dart'; // 💡 Required for kIsWeb and defaultTargetPlatform
+import 'package:flutter/foundation.dart' show kIsWeb; // 💡 Required for kIsWeb and defaultTargetPlatform
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../widgets/parent_task_manager_sheet.dart';
 import '../services/transaction_categorizer.dart'; 
+import 'package:camera/camera.dart';
 
 // --- Local Dashboard Data Composition Wrapper ---
 class DashboardData {
@@ -41,6 +42,11 @@ class _HomeScreenState extends State<HomeScreen> {
   String _selectedBank = 'Bank Islam';
   final TextEditingController _accountNumberController = TextEditingController();
 
+  // 💡 ADD THESE THREE LINES HERE:
+  String? _activeCameraTaskId; 
+  CameraController? _cameraController;
+  bool _isCameraInitializing = false;
+
   @override
   void initState() {
     super.initState();
@@ -57,6 +63,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _accountNumberController.dispose();
+    _cameraController?.dispose();
     super.dispose();
   }
 
@@ -165,6 +172,155 @@ Future<DashboardData> _fetchDashboardTelemetry() async {
       return DashboardData(profile: profileMetrics, wallet: walletMetrics);
     } catch (e) {
       throw Exception('Failed to synchronize dashboard telemetry: $e');
+    }
+  }
+
+Future<void> _startInlineCardCamera(String taskId) async {
+    if (appSystemCameras.isEmpty) {
+      try {
+        appSystemCameras = await availableCameras();
+      } catch (e) {
+        debugPrint('Live camera array query failed: $e');
+      }
+    }
+
+    if (appSystemCameras.isEmpty) {
+      debugPrint('⚠️ Hardware list empty. Creating a default browser stream fallback proxy.');
+      appSystemCameras = [
+        const CameraDescription(
+          name: '0', 
+          lensDirection: CameraLensDirection.front,
+          sensorOrientation: 0,
+        )
+      ];
+    }
+
+    setState(() {
+      _isCameraInitializing = true;
+      _activeCameraTaskId = taskId;
+    });
+
+    // 💡 STEP 1: Fully break down the old reference first
+    if (_cameraController != null) {
+      await _cameraController!.dispose();
+      _cameraController = null; // Forces memory pointer dereference
+    }
+
+    CameraDescription selectedLens;
+
+    if (kIsWeb) {
+      selectedLens = appSystemCameras.firstWhere(
+        (cam) => cam.lensDirection == CameraLensDirection.front,
+        orElse: () => appSystemCameras.first,
+      );
+    } else {
+      selectedLens = appSystemCameras.firstWhere(
+        (cam) => cam.lensDirection == CameraLensDirection.back,
+        orElse: () => appSystemCameras.first,
+      );
+    }
+
+    try {
+      _cameraController = CameraController(
+        selectedLens,
+        ResolutionPreset.medium,
+        enableAudio: false,
+      );
+
+      await _cameraController!.initialize();
+    } catch (e) {
+      debugPrint('First camera track initialization failed: $e');
+      
+      // 💡 STEP 2: Instantly clear out the broken controller instance pointer 
+      // before attempting the direct fallback initialization
+      try {
+        await _cameraController?.dispose();
+      } catch (_) {}
+      _cameraController = null; 
+
+      debugPrint('🎯 Triggering clean absolute fallback on Index-0 Camera Asset Track.');
+      
+      try {
+        _cameraController = CameraController(
+          appSystemCameras.first,
+          ResolutionPreset.medium,
+          enableAudio: false,
+        );
+        await _cameraController!.initialize();
+      } catch (fallbackError) {
+        debugPrint('Absolute fallback failed: $fallbackError');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              backgroundColor: Colors.redAccent,
+              content: Text('Camera lock failed: Please ensure no other app or widget is using the webcam.'),
+            ),
+          );
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isCameraInitializing = false);
+      }
+    }
+  }
+
+  Future<void> _snapAndUploadProof(String taskId, String taskTitle) async {
+    if (_cameraController == null || !_cameraController!.value.isInitialized) return;
+
+    try {
+      // 1. Instantly snap photo file
+      final XFile imageFile = await _cameraController!.takePicture();
+
+      // 2. Shut down viewfinder block layouts immediately
+      await _cameraController?.dispose();
+      _cameraController = null;
+      
+      setState(() {
+        _activeCameraTaskId = null;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Uploading photo validation payload to parents...')),
+      );
+
+      // 3. Prepare transmission vectors
+      final bytes = await imageFile.readAsBytes();
+      final String fileExtension = imageFile.path.split('.').last;
+      final String fileName = '${supabaseService.currentUserId}_${taskId}_${DateTime.now().millisecondsSinceEpoch}.$fileExtension';
+      final String filePath = 'proofs/$fileName';
+
+      // 4. Fire directly to Supabase Storage
+      await supabaseService.client.storage
+          .from('task-proofs')
+          .uploadBinary(filePath, bytes);
+
+      final String publicUrl = supabaseService.client.storage
+          .from('task-proofs')
+          .getPublicUrl(filePath);
+
+      // 5. Commit status update to PostgreSQL database
+      await supabaseService.client
+          .from('tasks')
+          .update({
+            'status': 'pending',
+            'proof_url': publicUrl,
+          })
+          .eq('id', taskId);
+
+      _refreshData();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Sent proof for "$taskTitle" successfully! Awaiting verification. 🌟')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Upload failed: $e'), backgroundColor: Colors.redAccent),
+        );
+      }
     }
   }
 
@@ -2258,9 +2414,7 @@ Widget _buildStatBox(String metric, String label, Color metricColor) {
   );
 }
 
-  // --- Child Component: Live Tasks Display Panel ---
-// --- Enhanced Child Component: Live Tasks Display Panel with Photo Proof ---
-// --- Child Component: Live Tasks Display Panel ---
+// --- Child Component: Live Tasks Display Panel (Centered Actions & Inline Camera) ---
   Widget _buildChildTasksSection(String childId) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2273,7 +2427,7 @@ Widget _buildStatBox(String metric, String label, Color metricColor) {
         FutureBuilder<List<dynamic>>(
           future: supabaseService.client
               .from('tasks')
-              .select('id, title, reward_amount, status, proof_url, assigned_at, due_date') // 👈 CHANGED
+              .select('id, title, description, reward_amount, status, proof_url, assigned_at, due_date') 
               .eq('profile_id', childId)
               .order('id', ascending: false),
           builder: (context, snapshot) {
@@ -2283,7 +2437,6 @@ Widget _buildStatBox(String metric, String label, Color metricColor) {
 
             final tasksList = snapshot.data ?? [];
 
-            // 🛑 RETAINED FALLBACK: If there are no tasks, show the custom placeholder layout card cleanly
             if (tasksList.isEmpty) {
               return Container(
                 width: double.infinity,
@@ -2304,7 +2457,7 @@ Widget _buildStatBox(String metric, String label, Color metricColor) {
               );
             }
 
-return ListView.builder(
+            return ListView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               itemCount: tasksList.length,
@@ -2316,6 +2469,7 @@ return ListView.builder(
                     : task['id'].toString();
                     
                 final String title = task['title'] ?? 'Secret Mission';
+                final String? description = task['description'];
                 final double reward = (task['reward_amount'] ?? 0.0).toDouble();
                 final String status = task['status'] ?? 'assigned';
                 final String rawDate = task['assigned_at'] ?? '';
@@ -2323,97 +2477,155 @@ return ListView.builder(
                     ? DateTime.parse(rawDate).toLocal().toString().split(' ')[0] 
                     : 'Recent';
 
-                // 👈 ADD THIS: Extract, check, and format the deadline date parameters
                 final String? rawDueDate = task['due_date'];
                 final DateTime? dueDate = rawDueDate != null ? DateTime.parse(rawDueDate).toLocal() : null;
                 final String formattedDueDate = dueDate != null ? dueDate.toString().split(' ')[0] : '';
                 final bool isOverdue = dueDate != null && DateTime.now().isAfter(dueDate) && status != 'completed';
 
                 bool isPendingOrDone = status == 'pending' || status == 'completed';
+                final bool isCameraOpenForThisTask = _activeCameraTaskId == taskId;
 
                 return Card(
                   color: Colors.white,
-                  margin: const EdgeInsets.only(bottom: 10),
+                  margin: const EdgeInsets.only(bottom: 12),
                   elevation: 0,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    leading: Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF3E8FF),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Icon(Icons.assignment_turned_in_rounded, color: Color(0xFF8B5CF6)),
-                    ),
-                    title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF1F2937))),
-subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        const SizedBox(height: 4),
-                        Text(
-                          'Reward: ${reward.toInt()} Coins 🟡',
-                          style: const TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.w600, fontSize: 13),
-                        ),
-                        const SizedBox(height: 4),
+                        // Main Layout Row: Metadata Left, Centered Controls Right
                         Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          crossAxisAlignment: CrossAxisAlignment.center, 
                           children: [
-                            Icon(Icons.calendar_today_rounded, size: 11, color: Colors.grey[400]),
-                            const SizedBox(width: 4),
-                            Text(
-                              'Assigned: $assignedDate',
-                              style: TextStyle(color: Colors.grey[500], fontSize: 11, fontWeight: FontWeight.w500),
+                            // 📝 Left Side text stack (Title, Description, Horizontal Dates)
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    title, 
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF1F2937)),
+                                  ),
+                                  if (description != null && description.trim().isNotEmpty) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      description.trim(),
+                                      style: TextStyle(fontSize: 12, color: Colors.grey[600], height: 1.3),
+                                    ),
+                                  ],
+                                  
+                                  const SizedBox(height: 12),
+
+                                  // Horizontal Dates Layout (No divider lines)
+                                  Wrap(
+                                    spacing: 16, 
+                                    runSpacing: 4, 
+                                    children: [
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(Icons.calendar_today_rounded, size: 11, color: Colors.grey[400]),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            'Assigned: $assignedDate',
+                                            style: TextStyle(color: Colors.grey[500], fontSize: 11, fontWeight: FontWeight.w500),
+                                          ),
+                                        ],
+                                      ),
+                                      if (formattedDueDate.isNotEmpty)
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              Icons.alarm_rounded, 
+                                              size: 12, 
+                                              color: isOverdue ? const Color(0xFFEF4444) : const Color(0xFFD97706),
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              isOverdue ? 'Overdue: $formattedDueDate ⚠️' : 'Due: $formattedDueDate',
+                                              style: TextStyle(
+                                                color: isOverdue ? const Color(0xFFEF4444) : const Color(0xFFD97706),
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            
+                            const SizedBox(width: 16),
+
+                            // 🎯 Right Side action stack (Vertically centered relative to entire card)
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Text(
+                                  '${reward.toInt()} Coins 🟡',
+                                  style: const TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold, fontSize: 14),
+                                ),
+                                const SizedBox(width: 12),
+                                isPendingOrDone
+                                    ? Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                        decoration: BoxDecoration(
+                                          color: status == 'pending' ? Colors.orange[50] : Colors.green[50],
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Text(
+                                          status == 'pending' ? 'PENDING' : 'DONE',
+                                          style: TextStyle(
+                                            fontSize: 10, 
+                                            fontWeight: FontWeight.bold, 
+                                            color: status == 'pending' ? Colors.orange[700] : Colors.green[700],
+                                          ),
+                                        ),
+                                      )
+                                    : SizedBox(
+                                        height: 32,
+                                        child: ElevatedButton.icon(
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: const Color(0xFF8B5CF6),
+                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                                            elevation: 0,
+                                          ),
+                                          icon: const Icon(Icons.camera_alt_rounded, size: 14, color: Colors.white),
+                                          label: const Text('Complete', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                                          onPressed: () => _openCameraPopup(taskId, title), // 🎯 Switch to the new popup view trigger
+                                        ),
+                                      ),
+                              ],
                             ),
                           ],
                         ),
-                        // 👈 ADD THIS MODULE: Renders the explicit due date information dynamically
-                        if (formattedDueDate.isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.alarm_rounded, 
-                                size: 12, 
-                                color: isOverdue ? const Color(0xFFEF4444) : const Color(0xFFEAB308),
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                isOverdue ? 'Overdue: $formattedDueDate ⚠️' : 'Due by: $formattedDueDate',
-                                style: TextStyle(
-                                  color: isOverdue ? const Color(0xFFEF4444) : const Color(0xFFD97706),
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
+
+                        // 🎥 Drop-down Inline Camera feed drawer
+                        if (isCameraOpenForThisTask) ...[
+                          const SizedBox(height: 14),
+                          Container(
+                            height: 220,
+                            decoration: BoxDecoration(
+                              color: Colors.black,
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            clipBehavior: Clip.antiAlias,
+                            child: _isCameraInitializing
+                                ? const Center(child: CircularProgressIndicator(color: Colors.white))
+                                : CameraPreview(_cameraController!),
                           ),
                         ],
                       ],
                     ),
-                    trailing: isPendingOrDone
-                        ? Chip(
-                            backgroundColor: status == 'pending' ? Colors.orange[50] : Colors.green[50],
-                            label: Text(
-                              status == 'pending' ? 'PENDING APPROVAL' : 'COMPLETED',
-                              style: TextStyle(
-                                fontSize: 11, 
-                                fontWeight: FontWeight.bold, 
-                                color: status == 'pending' ? Colors.orange[700] : Colors.green[700]
-                              ),
-                            ),
-                            side: BorderSide.none,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                          )
-                        : ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF8B5CF6),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                            ),
-                            icon: const Icon(Icons.camera_alt_rounded, size: 16, color: Colors.white),
-                            label: const Text('Complete', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                            onPressed: () => _submitTaskProof(taskId, title),
-                          ),
                   ),
                 );
               },
@@ -2421,6 +2633,214 @@ subtitle: Column(
           },
         ),
       ],
+    );
+  }
+
+void _openCameraPopup(String taskId, String taskTitle) async {
+    List<CameraDescription> localCameras = [];
+    try {
+      localCameras = await availableCameras();
+    } catch (e) {
+      debugPrint('Direct popup hardware scan failed: $e');
+    }
+
+    if (localCameras.isEmpty) {
+      localCameras = [
+        const CameraDescription(
+          name: '0', 
+          lensDirection: CameraLensDirection.front,
+          sensorOrientation: 0,
+        )
+      ];
+    }
+
+    CameraDescription selectedLens = localCameras.firstWhere(
+      (cam) => cam.lensDirection == (kIsWeb ? CameraLensDirection.front : CameraLensDirection.back),
+      orElse: () => localCameras.first,
+    );
+
+    if (!mounted) return;
+
+    // 🎯 CACHE THE ROOT CONTEXT: Captures your permanent HomeScreen context 
+    // before launching the temporary popup tree context lane.
+    final BuildContext rootContext = context;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false, 
+      builder: (BuildContext dialogContext) { // Renamed clearly to separate trees
+        CameraController? popupCameraController;
+        bool isInitialized = false;
+        bool isCapturing = false;
+
+        return StatefulBuilder(
+          builder: (context, setPopupState) {
+            if (popupCameraController == null) {
+              popupCameraController = CameraController(
+                selectedLens,
+                ResolutionPreset.medium,
+                enableAudio: false,
+              );
+
+              popupCameraController!.initialize().then((_) {
+                if (context.mounted) setPopupState(() => isInitialized = true);
+              }).catchError((e) {
+                popupCameraController = CameraController(localCameras.first, ResolutionPreset.medium, enableAudio: false);
+                popupCameraController!.initialize().then((_) {
+                  if (context.mounted) setPopupState(() => isInitialized = true);
+                });
+              });
+            }
+
+            return Dialog(
+              backgroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+              insetPadding: const EdgeInsets.all(24),
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 380), 
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min, 
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '📸 Proof: $taskTitle',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+                            ),
+                          ),
+                          IconButton(
+                            icon: Icon(Icons.close_rounded, color: Colors.grey[400]),
+                            onPressed: () async {
+                              // 💡 LIFE CYCLE FIX: Pop the UI first, then safely dispose background hardware tracks
+                              Navigator.pop(dialogContext);
+                              await popupCameraController?.dispose();
+                            },
+                          )
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+
+                      Center(
+                        child: SizedBox(
+                          width: 280,
+                          height: 280,
+                          child: Card(
+                            margin: EdgeInsets.zero,
+                            elevation: 0,
+                            clipBehavior: Clip.antiAlias,
+                            shape: const RoundedRectangleBorder(
+                              borderRadius: BorderRadius.all(Radius.circular(24)),
+                            ),
+                            color: Colors.black,
+                            child: !isInitialized
+                                ? const Center(child: CircularProgressIndicator(color: Colors.white))
+                                : ClipRect(
+                                    child: OverflowBox(
+                                      alignment: Alignment.center,
+                                      child: FittedBox(
+                                        fit: BoxFit.cover,
+                                        child: SizedBox(
+                                          width: popupCameraController!.value.previewSize!.height,
+                                          height: popupCameraController!.value.previewSize!.width,
+                                          child: CameraPreview(popupCameraController!),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF8B5CF6),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          elevation: 0,
+                        ),
+                        onPressed: (!isInitialized || isCapturing)
+                            ? null
+                            : () async {
+                                setPopupState(() => isCapturing = true);
+
+                                try {
+                                  // Snap picture file
+                                  final XFile imageFile = await popupCameraController!.takePicture();
+
+                                  // 💡 FIX ENGINE FLOW: Close the UI instantly so the frame stops rendering 
+                                  // before clearing the operational camera controllers downstream
+                                  if (dialogContext.mounted) {
+                                    Navigator.pop(dialogContext);
+                                  }
+
+                                  // Hand off the hardware controller to the system disposal track safely
+                                  final CameraController? controllerToDispose = popupCameraController;
+                                  popupCameraController = null;
+                                  if (controllerToDispose != null) {
+                                    await controllerToDispose.dispose();
+                                  }
+
+                                  // 💡 MOUNTED GUARD GUARD: Show temporary warning using the persistent root layout trees
+                                  if (rootContext.mounted) {
+                                    ScaffoldMessenger.of(rootContext).showSnackBar(
+                                      const SnackBar(content: Text('Transmitting image validation assets to Supabase storage...')),
+                                    );
+                                  }
+
+                                  final bytes = await imageFile.readAsBytes();
+                                  final String extension = imageFile.path.split('.').last;
+                                  final String name = '${supabaseService.currentUserId}_${taskId}_${DateTime.now().millisecondsSinceEpoch}.$extension';
+                                  final String path = 'proofs/$name';
+
+                                  await supabaseService.client.storage.from('task-proofs').uploadBinary(path, bytes);
+                                  final String publicUrl = supabaseService.client.storage.from('task-proofs').getPublicUrl(path);
+
+                                  await supabaseService.client.from('tasks').update({
+                                    'status': 'pending',
+                                    'proof_url': publicUrl,
+                                  }).eq('id', taskId);
+
+                                  _refreshData();
+
+                                  if (rootContext.mounted) {
+                                    ScaffoldMessenger.of(rootContext).clearSnackBars();
+                                    ScaffoldMessenger.of(rootContext).showSnackBar(
+                                      SnackBar(content: Text('Sent proof for "$taskTitle" successfully! Awaiting approval. 🌟')),
+                                    );
+                                  }
+                                } catch (e) {
+                                  if (rootContext.mounted) {
+                                    ScaffoldMessenger.of(rootContext).clearSnackBars();
+                                    ScaffoldMessenger.of(rootContext).showSnackBar(
+                                      SnackBar(content: Text('Failed to transmit photo proof: $e'), backgroundColor: Colors.redAccent),
+                                    );
+                                  }
+                                }
+                              },
+                        icon: isCapturing
+                            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                            : const Icon(Icons.photo_camera_rounded, color: Colors.white, size: 18),
+                        label: Text(
+                          isCapturing ? 'Uploading...' : 'Take Photo & Submit',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 

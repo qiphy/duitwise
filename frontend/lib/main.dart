@@ -5,43 +5,38 @@ import 'screens/splash_screen.dart';
 import 'firebase_options.dart'; 
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:camera/camera.dart'; // 💡 1. Import Camera Package
 
-// 🎯 The single source of truth for global app routing and modal overlays
 final GlobalKey<NavigatorState> globalNavigatorKey = GlobalKey<NavigatorState>();
 
+// 💡 2. Global source of truth for device lenses
+List<CameraDescription> appSystemCameras = [];
+
 void main() async {
-  // Initialize internal hardware framework hook mechanisms securely
   WidgetsFlutterBinding.ensureInitialized();
   
-  // 🌐 WEB TARGET ROUTING LOGIC BLOCK
   if (kIsWeb) {
-    debugPrint('🌐 Production Web Target Detected: Bypassing mobile push core initialization pipelines.');
-    
-    // Initialize Supabase core connection vectors safely for web client
+    debugPrint('🌐 Production Web Target Detected.');
     await supabaseService.initialize();
-    
-  } 
-  // 📱 NATIVE MOBILE TARGET ROUTING LOGIC BLOCK
-  else {
-    debugPrint('📱 Native Mobile Target Detected: Initializing hardware push registries.');
-    
-    // ⚡ Initialize Firebase Cloud Messaging core native background bindings
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-    
-    // Initialize Supabase core connection vectors safely
+  } else {
+    debugPrint('📱 Native Mobile Target Detected.');
+    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
     await supabaseService.initialize();
+
+    // 💡 3. Quick-scan hardware lenses concurrently during application boot
+    try {
+      appSystemCameras = await availableCameras();
+    } catch (e) {
+      debugPrint('No physical cameras found: $e');
+    }
 
     try {
       final rawToken = await FirebaseMessaging.instance.getToken();
       debugPrint('🚨 EARLY BOOT TOKEN CHECK: $rawToken');
     } catch (e) {
-      debugPrint('Error running early mobile token verification script: $e');
+      debugPrint('Token error: $e');
     }
   }
-  
-  // Launch the core layout context cleanly
   runApp(const FinancialLiteracyApp());
 }
 
@@ -50,19 +45,16 @@ class FinancialLiteracyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Check dynamically if a user profile is already stored on disk
-
     return MaterialApp(
       title: 'Duitwise | Financial Literacy for Kids',
       debugShowCheckedModeBanner: false,
-      navigatorKey: globalNavigatorKey, // Registered globally to allow context-free modal injections
+      navigatorKey: globalNavigatorKey,
       theme: ThemeData(
         useMaterial3: true,
         colorSchemeSeed: const Color(0xFF8B5CF6),
         scaffoldBackgroundColor: const Color(0xFFF5F6FA),
         fontFamily: 'SF Pro Display',
       ),
-      // Set your highly polished, animated splash screen as the root node entry point
       home: const SplashScreen(),
     );
   }
