@@ -79,52 +79,168 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  void _refreshData() {
-    setState(() {
-      _dashboardDataFuture = _fetchDashboardTelemetry();
+bool _isSyncing = false;
+
+void _refreshData() {
+  if (_isSyncing) return; // Prevent overlapping query dispatches
+  _isSyncing = true;
+  
+  setState(() {
+    _dashboardDataFuture = _fetchDashboardTelemetry().whenComplete(() {
+      _isSyncing = false;
     });
+  });
+}
+
+void _setupRealtimeDashboardListener() async {
+  final String? loggedInUserId = supabaseService.currentUserId;
+  if (loggedInUserId == null) return;
+
+  // 1. Clear out old operational streams to prevent memory leaks
+  for (final channel in _activeChannels) {
+    try {
+      supabaseService.client.removeChannel(channel);
+    } catch (_) {}
+  }
+  _activeChannels.clear();
+
+  // 2. Profile Sync Channel
+  final profileChannel = supabaseService.client
+      .channel('user_profile_sync')
+      .onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'profiles',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'id',
+          value: loggedInUserId,
+        ),
+        callback: (payload) {
+          debugPrint('⚡ Realtime Profile Change!');
+          _refreshData();
+        },
+      );
+
+  profileChannel.subscribe();
+  _activeChannels.add(profileChannel);
+
+  // 3. Resolve Target Identity Context (Self for Child, Linked Kid for Parent)
+  String targetChildId = loggedInUserId;
+  try {
+    final response = await supabaseService.client
+        .from('profiles')
+        .select('role')
+        .eq('id', loggedInUserId)
+        .maybeSingle();
+
+    if (response != null && response['role'] == 'parent') {
+      final List<dynamic> linkedKids = await supabaseService.client
+          .from('profiles')
+          .select('id')
+          .eq('parent_id', loggedInUserId)
+          .eq('role', 'child')
+          .limit(1);
+
+      if (linkedKids.isNotEmpty) {
+        targetChildId = linkedKids.first['id'];
+      }
+    }
+  } catch (e) {
+    debugPrint('Error mapping role profiles for real-time channels: $e');
   }
 
-  void _setupRealtimeDashboardListener() {
-    final String? loggedInUserId = supabaseService.currentUserId;
-    if (loggedInUserId == null) return;
+  // 4. Wallet Balance Sync Channel
+  final walletChannel = supabaseService.client
+      .channel('user_wallet_sync')
+      .onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'wallets',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'profile_id',
+          value: targetChildId,
+        ),
+        callback: (payload) => _refreshData(),
+      );
 
-    // 1. Listen for real-time changes on the user's Profile profile configuration row
-    final profileChannel = supabaseService.client
-        .channel('public:profiles:id=$loggedInUserId')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'profiles',
-          filter: PostgresChangeFilter(
-            type: PostgresChangeFilterType.eq,
-            column: 'id',
-            value: loggedInUserId,
-          ),
-          callback: (payload) {
-            debugPrint('⚡ Realtime Profile Change Detected! Syncing dashboard matrices.');
-            _refreshData();
-          },
-        );
+  walletChannel.subscribe();
+  _activeChannels.add(walletChannel);
 
-    // 2. Listen for real-time variations matching the Wallets ledger row state configuration
-    final walletChannel = supabaseService.client
-        .channel('public:wallets:profile_id=$loggedInUserId')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'wallets',
-          callback: (payload) {
-            debugPrint('🪙 Realtime Wallet Balance Change Detected! Syncing calculations.');
-            _refreshData();
-          },
-        );
+  // 🔥 5. NEW: Real-Time Task Delivery Engine Channel
+  final taskChannel = supabaseService.client
+      .channel('child_missions_sync')
+      .onPostgresChanges(
+        event: PostgresChangeEvent.all, // Catches INSERT (new chore), UPDATE (rejections/approvals), and DELETE
+        schema: 'public',
+        table: 'tasks',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'profile_id', // Listens strictly to tasks belonging to this child
+          value: targetChildId,
+        ),
+        callback: (payload) {
+          debugPrint('📋 Realtime Task Mutation Triggered! Status: ${payload.eventType}');
+          
+          // Triggers your existing FutureBuilder data refresh engine smoothly
+          _refreshData(); 
+        },
+      );
 
-    // Subscribe to both streams and cache pointers for safety disposals downstream
-    profileChannel.subscribe();
-    walletChannel.subscribe();
-    _activeChannels.addAll([profileChannel, walletChannel]);
+  taskChannel.subscribe();
+  _activeChannels.add(taskChannel);
+}
+
+Future<void> _bindWalletRealtimeStream(String currentUserId) async {
+  String targetWalletUserId = currentUserId;
+
+  try {
+    // Read the user role out from Supabase quickly to determine real-time mapping targets
+    final response = await supabaseService.client
+        .from('profiles')
+        .select('role')
+        .eq('id', currentUserId)
+        .maybeSingle();
+
+    if (response != null && response['role'] == 'parent') {
+      // Pivot tracking to watch the active child row instead
+      final List<dynamic> linkedKids = await supabaseService.client
+          .from('profiles')
+          .select('id')
+          .eq('parent_id', currentUserId)
+          .eq('role', 'child')
+          .limit(1);
+
+      if (linkedKids.isNotEmpty) {
+        targetWalletUserId = linkedKids.first['id'];
+      }
+    }
+  } catch (e) {
+    debugPrint('Failed evaluating role mapping parameters for real-time: $e');
   }
+
+  // Bind the targeted wallet subscription matrix securely
+  final walletChannel = supabaseService.client
+      .channel('user_wallet_sync')
+      .onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'wallets',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'profile_id',
+          value: targetWalletUserId,
+        ),
+        callback: (payload) {
+          debugPrint('🪙 Target Wallet Balance Change Detected! Syncing calculations for ID: $targetWalletUserId');
+          _refreshData();
+        },
+      );
+
+  walletChannel.subscribe();
+  _activeChannels.add(walletChannel);
+}
 
 Future<DashboardData> _fetchDashboardTelemetry() async {
     final String? loggedInUserId = supabaseService.currentUserId;
@@ -2682,20 +2798,6 @@ Widget _buildStatBox(String metric, String label, Color metricColor) {
                         ),
 
                         // 🎥 Drop-down Inline Camera feed drawer
-                        if (isCameraOpenForThisTask) ...[
-                          const SizedBox(height: 14),
-                          Container(
-                            height: 220,
-                            decoration: BoxDecoration(
-                              color: Colors.black,
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            clipBehavior: Clip.antiAlias,
-                            child: _isCameraInitializing
-                                ? const Center(child: CircularProgressIndicator(color: Colors.white))
-                                : CameraPreview(_cameraController!),
-                          ),
-                        ],
                       ],
                     ),
                   ),
@@ -2709,212 +2811,259 @@ Widget _buildStatBox(String metric, String label, Color metricColor) {
   }
 
 void _openCameraPopup(String taskId, String taskTitle) async {
-    List<CameraDescription> localCameras = [];
-    try {
-      localCameras = await availableCameras();
-    } catch (e) {
-      debugPrint('Direct popup hardware scan failed: $e');
-    }
+  List<CameraDescription> localCameras = [];
+  try {
+    localCameras = await availableCameras();
+  } catch (e) {
+    debugPrint('Direct popup hardware scan failed: $e');
+  }
 
-    if (localCameras.isEmpty) {
-      localCameras = [
-        const CameraDescription(
-          name: '0', 
-          lensDirection: CameraLensDirection.front,
-          sensorOrientation: 0,
-        )
-      ];
-    }
+  if (localCameras.isEmpty) {
+    localCameras = [
+      const CameraDescription(
+        name: '0', 
+        lensDirection: CameraLensDirection.front,
+        sensorOrientation: 0,
+      )
+    ];
+  }
 
-    CameraDescription selectedLens = localCameras.firstWhere(
-      (cam) => cam.lensDirection == (kIsWeb ? CameraLensDirection.front : CameraLensDirection.back),
-      orElse: () => localCameras.first,
-    );
+  CameraDescription selectedLens = localCameras.firstWhere(
+    (cam) => cam.lensDirection == (kIsWeb ? CameraLensDirection.front : CameraLensDirection.back),
+    orElse: () => localCameras.first,
+  );
 
-    if (!mounted) return;
+  if (!mounted) return;
 
-    // 🎯 CACHE THE ROOT CONTEXT: Captures your permanent HomeScreen context 
-    // before launching the temporary popup tree context lane.
-    final BuildContext rootContext = context;
+  final BuildContext rootContext = context;
 
-    showDialog(
-      context: context,
-      barrierDismissible: false, 
-      builder: (BuildContext dialogContext) { // Renamed clearly to separate trees
-        CameraController? popupCameraController;
-        bool isInitialized = false;
-        bool isCapturing = false;
+  showDialog(
+    context: context,
+    barrierDismissible: false, 
+    builder: (BuildContext dialogContext) { 
+      CameraController? popupCameraController;
+      bool isInitialized = false;
+      bool isCapturing = false;
+      bool isInitializingController = false; // 🛡️ Prevents race-conditions on fast double-builds
 
-        return StatefulBuilder(
-          builder: (context, setPopupState) {
-            if (popupCameraController == null) {
-              popupCameraController = CameraController(
-                selectedLens,
-                ResolutionPreset.medium,
+      return StatefulBuilder(
+        builder: (context, setPopupState) {
+          if (popupCameraController == null && !isInitializingController) {
+            isInitializingController = true;
+            
+            final CameraController controller = CameraController(
+              selectedLens,
+              ResolutionPreset.medium,
+              enableAudio: false,
+            );
+
+            controller.initialize().then((_) {
+              if (!context.mounted) {
+                controller.dispose();
+                return;
+              }
+              popupCameraController = controller;
+              setPopupState(() => isInitialized = true);
+            }).catchError((e) {
+              if (!context.mounted) return;
+              
+              final CameraController fallbackController = CameraController(
+                localCameras.first, 
+                ResolutionPreset.medium, 
                 enableAudio: false,
               );
-
-              popupCameraController!.initialize().then((_) {
-                if (context.mounted) setPopupState(() => isInitialized = true);
-              }).catchError((e) {
-                popupCameraController = CameraController(localCameras.first, ResolutionPreset.medium, enableAudio: false);
-                popupCameraController!.initialize().then((_) {
-                  if (context.mounted) setPopupState(() => isInitialized = true);
-                });
+              
+              fallbackController.initialize().then((_) {
+                if (!context.mounted) {
+                  fallbackController.dispose();
+                  return;
+                }
+                popupCameraController = fallbackController;
+                setPopupState(() => isInitialized = true);
               });
-            }
+            });
+          }
 
-            return Dialog(
-              backgroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-              insetPadding: const EdgeInsets.all(24),
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 380), 
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min, 
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Expanded(
-                            child: Text(
-                              '📸 Proof: $taskTitle',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
-                            ),
+          // Safe check wrapper helper to see if the preview layout can cleanly draw frame buffers
+          final bool isPreviewReady = isInitialized && 
+              popupCameraController != null && 
+              popupCameraController!.value.isInitialized;
+
+          return Dialog(
+            backgroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            insetPadding: const EdgeInsets.all(24),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 380), 
+                child: Column(
+                  mainAxisSize: MainAxisSize.min, 
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '📸 Proof: $taskTitle',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
                           ),
-                          IconButton(
-                            icon: Icon(Icons.close_rounded, color: Colors.grey[400]),
-                            onPressed: () async {
-                              // 💡 LIFE CYCLE FIX: Pop the UI first, then safely dispose background hardware tracks
-                              Navigator.pop(dialogContext);
-                              await popupCameraController?.dispose();
-                            },
-                          )
-                        ],
-                      ),
-                      const SizedBox(height: 16),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.close_rounded, color: Colors.grey[400]),
+                          onPressed: () async {
+                            // 💡 THE CLOSE BUTTON LIFECYCLE FIX:
+                            // 1. Instantly drop state variables so the UI switches away from CameraPreview rendering lanes
+                            setPopupState(() {
+                              isInitialized = false;
+                            });
 
-                      Center(
-                        child: SizedBox(
-                          width: 280,
-                          height: 280,
-                          child: Card(
-                            margin: EdgeInsets.zero,
-                            elevation: 0,
-                            clipBehavior: Clip.antiAlias,
-                            shape: const RoundedRectangleBorder(
-                              borderRadius: BorderRadius.all(Radius.circular(24)),
-                            ),
-                            color: Colors.black,
-                            child: !isInitialized
-                                ? const Center(child: CircularProgressIndicator(color: Colors.white))
-                                : ClipRect(
-                                    child: OverflowBox(
-                                      alignment: Alignment.center,
-                                      child: FittedBox(
-                                        fit: BoxFit.cover,
-                                        child: SizedBox(
-                                          width: popupCameraController!.value.previewSize!.height,
-                                          height: popupCameraController!.value.previewSize!.width,
-                                          child: CameraPreview(popupCameraController!),
-                                        ),
+                            // 2. Safely capture the current instance pointer and detach it from state trees
+                            final CameraController? controllerToDispose = popupCameraController;
+                            popupCameraController = null;
+
+                            // 3. Pop the window layout off the view tree stack cleanly
+                            if (dialogContext.mounted) {
+                              Navigator.pop(dialogContext);
+                            }
+
+                            // 4. Await a minor delay window to ensure route scaling transitions finish drawing 
+                            // before dropping hardware device registers out of OS context
+                            if (controllerToDispose != null) {
+                              await Future.delayed(const Duration(milliseconds: 100));
+                              await controllerToDispose.dispose();
+                            }
+                          },
+                        )
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    Center(
+                      child: SizedBox(
+                        width: 280,
+                        height: 280,
+                        child: Card(
+                          margin: EdgeInsets.zero,
+                          elevation: 0,
+                          clipBehavior: Clip.antiAlias,
+                          shape: const RoundedRectangleBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(24)),
+                          ),
+                          color: Colors.black,
+                          child: !isPreviewReady
+                              ? const Center(child: CircularProgressIndicator(color: Colors.white))
+                              : ClipRect(
+                                  child: OverflowBox(
+                                    alignment: Alignment.center,
+                                    child: FittedBox(
+                                      fit: BoxFit.cover,
+                                      child: SizedBox(
+                                        width: popupCameraController!.value.previewSize!.height,
+                                        height: popupCameraController!.value.previewSize!.width,
+                                        child: CameraPreview(popupCameraController!),
                                       ),
                                     ),
                                   ),
-                          ),
+                                ),
                         ),
                       ),
-                      const SizedBox(height: 20),
+                    ),
+                    const SizedBox(height: 20),
 
-                      ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF8B5CF6),
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                          elevation: 0,
-                        ),
-                        onPressed: (!isInitialized || isCapturing)
-                            ? null
-                            : () async {
-                                setPopupState(() => isCapturing = true);
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF8B5CF6),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        elevation: 0,
+                      ),
+                      onPressed: (!isPreviewReady || isCapturing)
+                          ? null
+                          : () async {
+                              setPopupState(() => isCapturing = true);
 
-                                try {
-                                  // Snap picture file
-                                  final XFile imageFile = await popupCameraController!.takePicture();
+                              try {
+                                final XFile imageFile = await popupCameraController!.takePicture();
 
-                                  // 💡 FIX ENGINE FLOW: Close the UI instantly so the frame stops rendering 
-                                  // before clearing the operational camera controllers downstream
-                                  if (dialogContext.mounted) {
-                                    Navigator.pop(dialogContext);
-                                  }
-
-                                  // Hand off the hardware controller to the system disposal track safely
-                                  final CameraController? controllerToDispose = popupCameraController;
-                                  popupCameraController = null;
-                                  if (controllerToDispose != null) {
-                                    await controllerToDispose.dispose();
-                                  }
-
-                                  // 💡 MOUNTED GUARD GUARD: Show temporary warning using the persistent root layout trees
-                                  if (rootContext.mounted) {
-                                    ScaffoldMessenger.of(rootContext).showSnackBar(
-                                      const SnackBar(content: Text('Transmitting image validation assets to Supabase storage...')),
-                                    );
-                                  }
-
-                                  final bytes = await imageFile.readAsBytes();
-                                  final String extension = imageFile.path.split('.').last;
-                                  final String name = '${supabaseService.currentUserId}_${taskId}_${DateTime.now().millisecondsSinceEpoch}.$extension';
-                                  final String path = 'proofs/$name';
-
-                                  await supabaseService.client.storage.from('task-proofs').uploadBinary(path, bytes);
-                                  final String publicUrl = supabaseService.client.storage.from('task-proofs').getPublicUrl(path);
-
-                                  await supabaseService.client.from('tasks').update({
-                                    'status': 'pending',
-                                    'proof_url': publicUrl,
-                                  }).eq('id', taskId);
-
-                                  _refreshData();
-
-                                  if (rootContext.mounted) {
-                                    ScaffoldMessenger.of(rootContext).clearSnackBars();
-                                    ScaffoldMessenger.of(rootContext).showSnackBar(
-                                      SnackBar(content: Text('Sent proof for "$taskTitle" successfully! Awaiting approval. 🌟')),
-                                    );
-                                  }
-                                } catch (e) {
-                                  if (rootContext.mounted) {
-                                    ScaffoldMessenger.of(rootContext).clearSnackBars();
-                                    ScaffoldMessenger.of(rootContext).showSnackBar(
-                                      SnackBar(content: Text('Failed to transmit photo proof: $e'), backgroundColor: Colors.redAccent),
-                                    );
-                                  }
+                                if (popupCameraController!.value.isStreamingImages) {
+                                  await popupCameraController!.stopImageStream();
                                 }
-                              },
-                        icon: isCapturing
-                            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                            : const Icon(Icons.photo_camera_rounded, color: Colors.white, size: 18),
-                        label: Text(
-                          isCapturing ? 'Uploading...' : 'Take Photo & Submit',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                        ),
+
+                                // Terminate state loops to strip components out of render pipelines
+                                setPopupState(() {
+                                  isInitialized = false;
+                                });
+
+                                final CameraController? controllerToDispose = popupCameraController;
+                                popupCameraController = null;
+
+                                if (dialogContext.mounted) {
+                                  Navigator.pop(dialogContext);
+                                }
+
+                                if (controllerToDispose != null) {
+                                  await Future.delayed(const Duration(milliseconds: 100));
+                                  await controllerToDispose.dispose();
+                                }
+
+                                if (rootContext.mounted) {
+                                  ScaffoldMessenger.of(rootContext).showSnackBar(
+                                    const SnackBar(content: Text('Transmitting image validation assets to Supabase storage...')),
+                                  );
+                                }
+
+                                final bytes = await imageFile.readAsBytes();
+                                final String extension = imageFile.path.split('.').last;
+                                final String name = '${supabaseService.currentUserId}_${taskId}_${DateTime.now().millisecondsSinceEpoch}.$extension';
+                                final String path = 'proofs/$name';
+
+                                await supabaseService.client.storage.from('task-proofs').uploadBinary(path, bytes);
+                                final String publicUrl = supabaseService.client.storage.from('task-proofs').getPublicUrl(path);
+
+                                await supabaseService.client.from('tasks').update({
+                                  'status': 'pending',
+                                  'proof_url': publicUrl,
+                                }).eq('id', taskId);
+
+                                _refreshData();
+
+                                if (rootContext.mounted) {
+                                  ScaffoldMessenger.of(rootContext).clearSnackBars();
+                                  ScaffoldMessenger.of(rootContext).showSnackBar(
+                                    SnackBar(content: Text('Sent proof for "$taskTitle" successfully! Awaiting approval. 🌟')),
+                                  );
+                                }
+                              } catch (e) {
+                                if (rootContext.mounted) {
+                                  ScaffoldMessenger.of(rootContext).clearSnackBars();
+                                  ScaffoldMessenger.of(rootContext).showSnackBar(
+                                    SnackBar(content: Text('Failed to transmit photo proof: $e'), backgroundColor: Colors.redAccent),
+                                  );
+                                }
+                              }
+                            },
+                      icon: isCapturing
+                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                          : const Icon(Icons.photo_camera_rounded, color: Colors.white, size: 18),
+                      label: Text(
+                        isCapturing ? 'Uploading...' : 'Take Photo & Submit',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
-            );
-          },
-        );
-      },
-    );
-  }
+            ),
+          );
+        },
+      );
+    },
+  );
+}
 
   // --- Photo Proof Handler Execution Logic ---
   Future<void> _submitTaskProof(String taskId, String taskTitle) async {
