@@ -17,6 +17,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../widgets/parent_task_manager_sheet.dart';
 import '../services/transaction_categorizer.dart'; 
 import 'package:camera/camera.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 // --- Local Dashboard Data Composition Wrapper ---
 class DashboardData {
@@ -47,23 +48,34 @@ class _HomeScreenState extends State<HomeScreen> {
   CameraController? _cameraController;
   bool _isCameraInitializing = false;
 
+  SupabaseClient? _realtimeClient;
+  List<RealtimeChannel> _activeChannels = [];
+
   @override
-  void initState() {
-    super.initState();
-    _refreshData();
+    void initState() {
+      super.initState();
+      _refreshData();
+      
+      // 💡 Add this line here to kick off the listener immediately:
+      _setupRealtimeDashboardListener();
 
       WidgetsBinding.instance.addPostFrameCallback((_) async {
-            await NotificationService().initializeNotificationPipeline(
-              context, 
-              globalNavigatorKey
-            );
-          });
-      }
+        await NotificationService().initializeNotificationPipeline(
+          context, 
+          globalNavigatorKey
+        );
+      });
+    }
 
   @override
   void dispose() {
     _accountNumberController.dispose();
     _cameraController?.dispose();
+    
+    // 💡 Add these lines here to close out background streams cleanly:
+    for (final channel in _activeChannels) {
+      supabaseService.client.removeChannel(channel);
+    }
     super.dispose();
   }
 
@@ -71,6 +83,47 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _dashboardDataFuture = _fetchDashboardTelemetry();
     });
+  }
+
+  void _setupRealtimeDashboardListener() {
+    final String? loggedInUserId = supabaseService.currentUserId;
+    if (loggedInUserId == null) return;
+
+    // 1. Listen for real-time changes on the user's Profile profile configuration row
+    final profileChannel = supabaseService.client
+        .channel('public:profiles:id=$loggedInUserId')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'profiles',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'id',
+            value: loggedInUserId,
+          ),
+          callback: (payload) {
+            debugPrint('⚡ Realtime Profile Change Detected! Syncing dashboard matrices.');
+            _refreshData();
+          },
+        );
+
+    // 2. Listen for real-time variations matching the Wallets ledger row state configuration
+    final walletChannel = supabaseService.client
+        .channel('public:wallets:profile_id=$loggedInUserId')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'wallets',
+          callback: (payload) {
+            debugPrint('🪙 Realtime Wallet Balance Change Detected! Syncing calculations.');
+            _refreshData();
+          },
+        );
+
+    // Subscribe to both streams and cache pointers for safety disposals downstream
+    profileChannel.subscribe();
+    walletChannel.subscribe();
+    _activeChannels.addAll([profileChannel, walletChannel]);
   }
 
 Future<DashboardData> _fetchDashboardTelemetry() async {
