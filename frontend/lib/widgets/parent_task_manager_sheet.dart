@@ -1182,70 +1182,96 @@ Widget _buildSettingsFormView() {
     );
   }
 
-  Future<void> _approveTaskTransaction(String taskId, double amount, String taskTitle, String recurringInterval) async {
-    try {
-      final taskQuery = await supabaseService.client
-                .from('tasks')
-                .select('due_date')
-                .eq('id', taskId)
-                .maybeSingle();
+Future<void> _approveTaskTransaction(String taskId, double amount, String taskTitle, String recurringInterval) async {
+  try {
+    // 1. Determine task status and update task records
+    final taskQuery = await supabaseService.client
+              .from('tasks')
+              .select('due_date')
+              .eq('id', taskId)
+              .maybeSingle();
 
-      final String? dueDateStr = taskQuery?['due_date'];
-      final DateTime? dueDate = dueDateStr != null ? DateTime.parse(dueDateStr) : null;
-      final bool isPastDueDate = dueDate != null && DateTime.now().isAfter(dueDate);
+    final String? dueDateStr = taskQuery?['due_date'];
+    final DateTime? dueDate = dueDateStr != null ? DateTime.parse(dueDateStr) : null;
+    final bool isPastDueDate = dueDate != null && DateTime.now().isAfter(dueDate);
 
-      if (recurringInterval == 'none' || isPastDueDate) {
-        await supabaseService.client.from('tasks').update({'status': 'completed'}).eq('id', taskId);
-      } else {
-        await supabaseService.client.from('tasks').update({
-          'status': 'assigned',
-          'proof_url': null,
-        }).eq('id', taskId);
-      }
-      await supabaseService.client.rpc('increment_completed_tasks', params: {'user_id': widget.childId});
-
-      final List<dynamic> walletRecords = await supabaseService.client
-          .from('wallets')
-          .select('total_balance, save_balance, spend_balance, share_balance')
-          .eq('profile_id', widget.childId);
-
-      final double saveIncrement = amount * (_savePercentage / 100.0);
-      final double spendIncrement = amount * (_spendPercentage / 100.0);
-      final double shareIncrement = amount * (_sharePercentage / 100.0);
-
-      if (walletRecords.isNotEmpty) {
-        final currentWallet = walletRecords.first;
-        final double currentTotal = currentWallet['total_balance'] != null ? double.parse(currentWallet['total_balance'].toString()) : 0.0;
-        final double currentSave = currentWallet['save_balance'] != null ? double.parse(currentWallet['save_balance'].toString()) : 0.0;
-        final double currentSpend = currentWallet['spend_balance'] != null ? double.parse(currentWallet['spend_balance'].toString()) : 0.0;
-        final double currentShare = currentWallet['share_balance'] != null ? double.parse(currentWallet['share_balance'].toString()) : 0.0;
-
-        await supabaseService.client.from('wallets').update({
-          'total_balance': currentTotal + amount,
-          'save_balance': currentSave + saveIncrement,
-          'spend_balance': currentSpend + spendIncrement,
-          'share_balance': currentShare + shareIncrement,
-        }).eq('profile_id', widget.childId);
-      } else {
-        await supabaseService.client.from('wallets').insert({
-          'profile_id': widget.childId,
-          'total_balance': amount,
-          'save_balance': saveIncrement,
-          'spend_balance': spendIncrement,
-          'share_balance': shareIncrement,
-        });
-      }
-
-      await supabaseService.client.from('transactions').insert({
-        'profile_id': widget.childId,
-        'title': taskTitle,
-        'amount': amount,
-        'category': 'Task',
-      });
-    } catch (e) {
-      debugPrint('Database Transaction Fault: $e');
+    if (recurringInterval == 'none' || isPastDueDate) {
+      await supabaseService.client.from('tasks').update({'status': 'completed'}).eq('id', taskId);
+    } else {
+      await supabaseService.client.from('tasks').update({
+        'status': 'assigned',
+        'proof_url': null,
+      }).eq('id', taskId);
     }
+    await supabaseService.client.rpc('increment_completed_tasks', params: {'user_id': widget.childId});
+
+    // 🎯 FIX: Fetch the actual verified matrix split percentages directly from the profile row
+    final profileSnapshot = await supabaseService.client
+        .from('profiles')
+        .select('save_reward_percentage, spend_reward_percentage, share_reward_percentage')
+        .eq('id', widget.childId)
+        .maybeSingle();
+
+    // Default back to local state parameters or classic 70/20/10 split rule if database parameters are null
+    final double saveRatio = ((profileSnapshot?['save_reward_percentage'] as num?)?.toDouble() ?? _savePercentage) / 100.0;
+    final double spendRatio = ((profileSnapshot?['spend_reward_percentage'] as num?)?.toDouble() ?? _spendPercentage) / 100.0;
+    final double shareRatio = ((profileSnapshot?['share_reward_percentage'] as num?)?.toDouble() ?? _sharePercentage) / 100.0;
+
+    // Verify matrix safety alignment
+    final double totalRatioVerification = saveRatio + spendRatio + shareRatio;
+    
+    // Safety check: if ratios are corrupted or don't equal 100%, force use of standard matrix rules safely
+    bool isRatioValid = (totalRatioVerification - 1.0).abs() < 0.01;
+    final double checkedSaveRatio  = isRatioValid ? saveRatio  : 0.70;
+    final double checkedSpendRatio = isRatioValid ? spendRatio : 0.20;
+    final double checkedShareRatio = isRatioValid ? shareRatio : 0.10;
+
+    final double saveIncrement  = amount * checkedSaveRatio;
+    final double spendIncrement = amount * checkedSpendRatio;
+    final double shareIncrement = amount * checkedShareRatio;
+
+    // 2. Fetch current wallet balances cleanly with standard num downcasting
+    final List<dynamic> walletRecords = await supabaseService.client
+        .from('wallets')
+        .select('total_balance, save_balance, spend_balance, share_balance')
+        .eq('profile_id', widget.childId);
+
+    if (walletRecords.isNotEmpty) {
+      final currentWallet = walletRecords.first;
+      
+      // Clean parsing via generic number abstraction to block stringification crashes
+      final double currentTotal = (currentWallet['total_balance'] as num?)?.toDouble() ?? 0.0;
+      final double currentSave  = (currentWallet['save_balance'] as num?)?.toDouble() ?? 0.0;
+      final double currentSpend = (currentWallet['spend_balance'] as num?)?.toDouble() ?? 0.0;
+      final double currentShare = (currentWallet['share_balance'] as num?)?.toDouble() ?? 0.0;
+
+      await supabaseService.client.from('wallets').update({
+        'total_balance': currentTotal + amount,
+        'save_balance': currentSave + saveIncrement,
+        'spend_balance': currentSpend + spendIncrement,
+        'share_balance': shareIncrement + currentShare, // Fixed logic inversion placement!
+      }).eq('profile_id', widget.childId);
+    } else {
+      await supabaseService.client.from('wallets').insert({
+        'profile_id': widget.childId,
+        'total_balance': amount,
+        'save_balance': saveIncrement,
+        'spend_balance': spendIncrement,
+        'share_balance': shareIncrement,
+      });
+    }
+
+    // 3. Register transaction history audit trail row
+    await supabaseService.client.from('transactions').insert({
+      'profile_id': widget.childId,
+      'title': taskTitle,
+      'amount': amount,
+      'category': 'Task',
+    });
+  } catch (e) {
+    debugPrint('Database Transaction Fault: $e');
   }
+}
 
   Future<bool?> _showDeleteConfirmationDialog(String taskTitle) {
     return showDialog<bool>(

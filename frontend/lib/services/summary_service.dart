@@ -348,7 +348,7 @@ class SummaryService {
     }
   }
 
-  Future<void> generateAndShareHouseholdZipArchive(List<dynamic> kidsList) async {
+Future<void> generateAndShareHouseholdZipArchive(List<dynamic> kidsList) async {
     final Archive familyArchive = Archive();
 
     final List<Future<void>> compilationTasks = kidsList.map((kid) async {
@@ -405,7 +405,16 @@ class SummaryService {
         preFetchedTransactions: preFetchedTx, 
       );
       
-      final String safeFileName = "${kidName.replaceAll(RegExp(r'[^\w\s]+'), '')}_Monthly_Statement.pdf";
+      // Clean up string formatting for safety across OS file systems
+      final String cleanKidName = kidName.replaceAll(RegExp(r'[^\w\s]+'), '').trim();
+
+      // 🎯 THE FIX: Slice the last 4 characters of the unique kidId (UUID string) 
+      // to keep names recognizable while making every single archive key unique.
+      final String uniqueSuffix = kidId.length > 4 
+          ? kidId.substring(kidId.length - 4).toUpperCase() 
+          : kidId;
+
+      final String safeFileName = "${cleanKidName}_($uniqueSuffix)_Monthly_Statement.pdf";
 
       familyArchive.addFile(
         ArchiveFile(safeFileName, highFidelityPdfBytes.length, highFidelityPdfBytes),
