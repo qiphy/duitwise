@@ -226,12 +226,6 @@ In a financially literate society:
 
 ---
 
-## 📄 License
-
-[Add your license information here]
-
----
-
 ## AI Tools Used
 
 ### 1. Gemini (Google)
